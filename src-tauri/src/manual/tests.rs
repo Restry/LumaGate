@@ -12,6 +12,8 @@ mod local_access_cases;
 mod outcome_cases;
 #[path = "session_cases.rs"]
 mod session_cases;
+#[path = "stream_identity_cases.rs"]
+mod stream_identity_cases;
 
 #[derive(Clone)]
 struct Mock {

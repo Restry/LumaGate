@@ -89,7 +89,7 @@ impl Default for ChatToResponsesState {
         Self {
             response_started: false,
             completed: false,
-            response_id: "resp_ccswitch".to_string(),
+            response_id: String::new(),
             model: String::new(),
             created_at: 0,
             next_output_index: 0,
@@ -118,8 +118,16 @@ impl ChatToResponsesState {
     fn handle_chat_chunk(&mut self, chunk: &Value) -> Vec<Bytes> {
         let mut events = Vec::new();
 
-        if let Some(id) = chunk.get("id").and_then(|v| v.as_str()) {
-            self.response_id = response_id_from_chat_id(Some(id));
+        // Once published, the Responses identity also keys downstream assembly
+        // and bridge history. Late/changed Chat IDs must not rename that response.
+        if !self.response_started {
+            if let Some(id) = chunk
+                .get("id")
+                .and_then(Value::as_str)
+                .filter(|id| !id.is_empty())
+            {
+                self.response_id = response_id_from_chat_id(Some(id));
+            }
         }
         if let Some(model) = chunk.get("model").and_then(|v| v.as_str()) {
             if !model.is_empty() {
@@ -736,7 +744,12 @@ impl ChatToResponsesState {
             .collect::<Vec<_>>()
     }
 
-    fn base_response(&self, status: &str, output: Vec<Value>) -> Value {
+    fn base_response(&mut self, status: &str, output: Vec<Value>) -> Value {
+        // Allocate only when no upstream ID was available before the first event,
+        // including errors before any Chat chunk. Never share a fallback across requests.
+        if self.response_id.is_empty() {
+            self.response_id = format!("resp_{}", uuid::Uuid::new_v4());
+        }
         json!({
             "id": self.response_id,
             "object": "response",

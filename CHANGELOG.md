@@ -1,5 +1,9 @@
 # LumaGate 变更记录
 
+## 未发布
+
+- 修复 Chat Completions 转 Responses 流时，迟到或变化的上游 ID 覆盖已发送 response ID、导致按 ID 组装的下游出现重复回复的问题。首事件缺少 ID 时按请求生成唯一 ID；保留原生 Responses 的服务器 ID、续轮状态及各输出项和工具调用的独立身份。
+
 ## 3.24.0
 
 - 产品入口、支持链接、发行资产与包元数据统一为 LumaGate / Restry/LumaGate；可执行文件为 `lumagate`，应用标识为 `cn.restry.lumagate`。独立仓库从当前代码建立全新历史，仅保留 dev/release；旧手册、设计样稿与完整历史保留在只读 LumaGate-legacy，MIT 原始版权保留。
