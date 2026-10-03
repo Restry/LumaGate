@@ -98,7 +98,9 @@ jobs:
           python-version: "3.13"
       - name: Set up pinned pnpm and Rust target
         run: |
-          npm install --global corepack@0.34.6
+          # Hosted Windows preinstalls Yarn shims in npm's prefix. Replace those
+          # runner-only shims; Corepack package integrity checks stay enabled.
+          npm install --global --force corepack@0.34.6
           corepack enable
           corepack install
           pnpm config set store-dir .pnpm-store
