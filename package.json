@@ -1,6 +1,6 @@
 {
   "name": "lumagate",
-  "version": "3.24.0",
+  "version": "3.24.2",
   "description": "LumaGate — a local model gateway for Pi, Claude Code and Codex",
   "type": "module",
   "scripts": {

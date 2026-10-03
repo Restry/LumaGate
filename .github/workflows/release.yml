@@ -96,13 +96,35 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.13"
-      - name: Set up pinned pnpm and Rust target
+      - name: Set up pinned pnpm on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
         run: |
-          # Hosted Windows preinstalls Yarn shims in npm's prefix. Replace those
-          # runner-only shims; Corepack package integrity checks stay enabled.
-          npm install --global --force corepack@0.34.6
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          # Use a fresh prefix, not either preinstalled Node/Yarn shim directory.
+          $prefix = Join-Path $env:RUNNER_TEMP 'lumagate-corepack'
+          npm install --global --prefix $prefix corepack@0.34.6
+          $corepack = Join-Path $prefix 'node_modules/corepack/dist/corepack.js'
+          Write-Output "Corepack entry: $corepack"
+          node $corepack enable --install-directory $prefix
+          node $corepack install
+          $env:PATH = "$prefix;$env:PATH"
+          Add-Content -Path $env:GITHUB_PATH -Value $prefix -Encoding utf8
+          Get-Command node, corepack, pnpm | Select-Object Name, Source
+          if ((corepack --version) -ne '0.34.6') { throw 'Wrong Corepack resolved' }
+          if ((pnpm --version) -ne '10.12.3') { throw 'Wrong pnpm resolved' }
+      - name: Set up pinned pnpm on Unix
+        if: runner.os != 'Windows'
+        run: |
+          npm install --global corepack@0.34.6
           corepack enable
           corepack install
+      - name: Verify package manager paths and set up Rust target
+        run: |
+          type -a node corepack pnpm
+          corepack --version
+          pnpm --version
           pnpm config set store-dir .pnpm-store
           rustup show active-toolchain
           rustup target add "$TARGET"

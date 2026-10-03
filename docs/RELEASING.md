@@ -102,7 +102,7 @@ annotated tag 的 ref 指向 tag object，继续 GET `/git/tags/OBJECT_SHA` 核�
 
 Node 版本沿用 `.node-version`。当前 Node 22.12.0 自带 Corepack 0.29.4，其旧 npm 公钥会使 pnpm 10.12.3 下载报 `Cannot find matching keyid`；CI 在两个构建入口先安装固定 `corepack@0.34.6`，再按 `packageManager` 执行 `corepack install`。此组合已在隔离目录实测，不禁用 Corepack integrity checks。
 
-Windows hosted runner 的 npm prefix 已含 Yarn shim；原生构建入口安装 Corepack 时使用 `npm install --global --force corepack@0.34.6` 替换这些临时 runner shim，避免 `EEXIST`。该选项不禁用 Corepack 包签名校验，不改动开发者本机的 npm 配置。
+Windows hosted runner 的 Node 自带 Corepack 与 npm 全局 prefix 不同，单纯升级全局包仍可能解析到旧 shim。Windows 在 runner 临时目录安装固定 Corepack，以绝对 JS 路径启用和下载 pnpm，并将同一目录置于 PATH 首位；进入构建前打印路径并验证 Corepack 0.34.6 / pnpm 10.12.3。不禁用包签名检查、不依赖预装 Yarn、不改动开发者本机 npm 配置。
 
 ## 本地发布工具验证
 
