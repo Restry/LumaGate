@@ -38,6 +38,8 @@
 
 使用 Tauri 配置及目标 bundle 目录发现产物，不硬编码旧 `cc-switch` 可执行文件名。每种格式必须恰好匹配一个文件，缺失、重复、跨 SHA/版本/平台混装、未知额外文件、空文件、摘要不符均阻止发布。macOS 检查 app 内版本、Mach-O 架构、结构性 codesign 验证及 DMG 校验；Windows 检查主程序 x64 PE、ProductVersion/ProductName；Linux 检查 deb 版本/架构和 AppImage ELF 架构。检查不会启动应用或接触用户数据。
 
+macOS 明确构建 `app,dmg`，保留 `.app` 供版本、架构与签名检查；仅构建 `dmg` 会被 Tauri 清理中间 `.app`。公开资产仍只收集两个架构的 DMG，不额外上传应用目录。
+
 原始输出只上传本次 workflow 的平台 artifact。汇总不合并同名目录，先检查每个平台自己的 `build.json`，再生成包含 6 个文件摘要的 `SHA256SUMS`（不包含自身）。上传草稿后再次检查 GitHub 返回的 7 个资产名称、数量、大小、上传状态及 SHA256 digest，最后才将 `draft=false`、`prerelease=false`。任何必需平台失败都不能发布残缺版本。
 
 ## 失败与重试
