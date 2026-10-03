@@ -1,0 +1,195 @@
+.mg-network-settings {
+  container: network-settings / inline-size;
+  max-inline-size: 1120px;
+  margin-inline: auto;
+}
+.mg-network-pending {
+  margin-block-end: 24px;
+  background: var(--mg-soft);
+  color: var(--mg-ink);
+  border-color: var(--mg-line);
+}
+.mg-network-pending p {
+  margin-block-start: 8px;
+  line-height: 1.8;
+  overflow-wrap: anywhere;
+}
+.mg-network-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+.mg-network-controls,
+.mg-network-form,
+.mg-network-connection {
+  display: grid;
+  gap: 20px;
+  min-inline-size: 0;
+}
+.mg-network-connection {
+  padding: 20px;
+  background: var(--mg-side);
+  border-radius: 12px;
+}
+.mg-network-section {
+  display: grid;
+  gap: 12px;
+  min-inline-size: 0;
+}
+.mg-network-section h2 {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--mg-ink);
+}
+.mg-network-section h3 {
+  font-size: 12px;
+  font-weight: 550;
+  color: var(--mg-ink);
+}
+.mg-network-note,
+.mg-network-security,
+.mg-network-example {
+  color: var(--mg-muted);
+  font-size: 12px;
+  line-height: 1.85;
+}
+.mg-network-settings .mg-network-input {
+  min-inline-size: 0;
+  block-size: 38px;
+  background: var(--mg-surface);
+  border-color: var(--mg-control);
+  color: var(--mg-ink);
+  font-size: 13px;
+}
+.mg-network-input[aria-invalid="true"] {
+  border-color: var(--mg-error);
+}
+.mg-network-error {
+  color: var(--mg-error);
+  font-size: 12px;
+  line-height: 1.7;
+}
+.mg-network-secret {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.mg-network-secret input {
+  flex: 1;
+}
+.mg-network-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.mg-network-message {
+  color: var(--mg-muted);
+  font-size: 12px;
+  line-height: 1.8;
+}
+.mg-network-summary {
+  display: grid;
+  gap: 12px;
+  font-size: 12px;
+}
+.mg-network-summary > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.mg-network-summary dt {
+  color: var(--mg-muted);
+}
+.mg-network-summary dd {
+  color: var(--mg-ink);
+}
+.mg-network-address {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+  min-inline-size: 0;
+}
+.mg-network-address code,
+.mg-network-summary code {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  color: var(--mg-ink);
+}
+.mg-network-example summary {
+  cursor: pointer;
+  color: var(--mg-ink);
+  min-block-size: 28px;
+}
+.mg-network-example p,
+.mg-network-example pre {
+  margin-block-start: 12px;
+}
+.mg-network-example pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--mg-ink);
+  font-size: 11px;
+}
+.mg-access-keys {
+  display: grid;
+  gap: 16px;
+  min-inline-size: 0;
+}
+.mg-access-keys-heading,
+.mg-access-key-identity > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.mg-access-keys h2 {
+  font-size: 14px;
+  font-weight: 600;
+}
+.mg-access-keys h2 span {
+  margin-inline-start: 8px;
+  font-size: 11px;
+  color: var(--mg-muted);
+  font-weight: 400;
+}
+.mg-access-key-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.mg-access-key-row {
+  padding-block: 12px;
+  border-block-start: 1px solid var(--mg-line);
+  display: grid;
+  gap: 12px;
+}
+.mg-access-key-identity strong {
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.mg-access-key-identity span,
+.mg-access-key-identity p {
+  color: var(--mg-muted);
+  font-size: 11px;
+  line-height: 1.8;
+}
+.mg-access-key-identity p {
+  margin-block-start: 6px;
+}
+.mg-access-key-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+@container network-settings (max-width: 690px) {
+  .mg-network-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .mg-network-connection {
+    padding: 20px;
+  }
+}

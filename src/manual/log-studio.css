@@ -1,0 +1,738 @@
+.mg-log-studio {
+  --ls-radius: 12px;
+  --ls-subtle: color-mix(in srgb, var(--mg-line) 68%, transparent);
+  min-inline-size: 0;
+}
+.ls-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+.ls-heading h1 {
+  font-size: 24px;
+  line-height: 1.2;
+  font-weight: 650;
+  letter-spacing: -0.025em;
+  margin: 0;
+}
+.ls-subtitle {
+  display: none;
+}
+.ls-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ls-heading-actions .mg-select {
+  width: 132px;
+  height: 34px;
+  border-color: var(--mg-line);
+  background: var(--mg-surface);
+}
+.ls-heading-actions .mg-button {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+}
+.ls-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 54px;
+  margin-inline-end: 8px;
+  font-size: 11px;
+  color: var(--mg-muted);
+  white-space: nowrap;
+}
+.ls-live i,
+.ls-status-dot {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--mg-success);
+}
+.ls-live[data-state="查询中"] i,
+.ls-live[data-state="已暂停"] i {
+  background: var(--mg-muted);
+}
+.ls-live.is-error,
+.ls-live.is-error i {
+  color: var(--mg-error);
+}
+.ls-live.is-error i {
+  background: var(--mg-error);
+}
+.ls-overview {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr 1fr 1fr auto;
+  gap: 20px;
+  align-items: end;
+  margin: 28px 0 22px;
+  padding-block-end: 24px;
+  border-bottom: 1px solid var(--ls-subtle);
+}
+.ls-stat dt {
+  color: var(--mg-muted);
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.ls-stat dd {
+  margin: 8px 0 0;
+  font-size: 27px;
+  font-weight: 580;
+  line-height: 1.12;
+  letter-spacing: -0.035em;
+  font-variant-numeric: tabular-nums;
+}
+.ls-stat-total dd {
+  font-size: 38px;
+  font-weight: 650;
+}
+.ls-stat-rate dd {
+  font-size: 29px;
+}
+.ls-status-dot.is-failed {
+  background: var(--mg-error);
+}
+.ls-pending {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  padding-block-end: 3px;
+  color: var(--mg-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.mg-rolling {
+  display: inline-block;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.mg-rolling number-flow-react {
+  display: inline-block;
+  line-height: inherit;
+  --number-flow-mask-height: 0.06em;
+  --number-flow-mask-width: 0.025em;
+}
+.ls-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-block: 18px 14px;
+}
+.ls-tabs {
+  display: inline-flex;
+  flex-shrink: 0;
+  padding: 3px;
+  border: 1px solid var(--mg-line);
+  border-radius: 9px;
+  background: var(--mg-side);
+  margin-inline-end: 6px;
+}
+.ls-tabs button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--mg-muted);
+  padding: 7px 13px;
+  min-height: 30px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.ls-tabs button[aria-selected="true"] {
+  color: var(--mg-ink);
+  background: var(--mg-surface);
+  box-shadow:
+    0 1px 3px #00000012,
+    inset 0 0 0 1px var(--mg-line);
+}
+.ls-search {
+  display: flex;
+  align-items: center;
+  position: relative;
+  flex: 1 1 200px;
+  min-width: 130px;
+}
+.ls-search > svg {
+  position: absolute;
+  inset-inline-start: 11px;
+  color: var(--mg-muted);
+  pointer-events: none;
+}
+.mg-log-studio .ls-search input {
+  height: 37px;
+  padding-inline-start: 34px;
+  background: var(--mg-surface);
+  color: var(--mg-ink);
+  border: 1px solid var(--mg-line);
+  border-radius: 8px;
+  font-size: 12px;
+  box-shadow: none;
+}
+.ls-toolbar > .mg-select {
+  width: 185px;
+  height: 37px;
+  border-color: var(--mg-line);
+  background: var(--mg-surface);
+  flex-shrink: 1;
+  min-width: 0;
+}
+.ls-more.mg-button {
+  gap: 6px;
+  height: 37px;
+  border-color: var(--mg-line);
+  background: var(--mg-surface);
+  font-size: 12px;
+}
+.ls-filter-count {
+  display: inline-grid;
+  place-content: center;
+  height: 17px;
+  min-width: 17px;
+  padding-inline: 3px;
+  background: var(--mg-selected);
+  color: var(--mg-ink);
+  border-radius: 4px;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.ls-popover {
+  width: min(340px, calc(100vw - 32px));
+  padding: 18px;
+  border: 1px solid var(--mg-line);
+  border-radius: 12px;
+  background: var(--mg-surface);
+  color: var(--mg-ink);
+  font:
+    12px/1.6 -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    "PingFang SC",
+    sans-serif;
+  box-shadow: 0 8px 24px #00000020;
+}
+.ls-popover-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-block-end: 12px;
+}
+.ls-popover h2 {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0;
+}
+.ls-popover-heading > button {
+  border: 0;
+  background: transparent;
+  color: var(--mg-muted);
+  cursor: pointer;
+  padding: 4px 6px;
+}
+.ls-popover > label {
+  display: block;
+  font-size: 11px;
+  color: var(--mg-muted);
+  margin-block: 12px 5px;
+}
+.ls-popover > input,
+.ls-popover .mg-select {
+  width: 100%;
+  height: 36px;
+  min-width: 0;
+  max-width: 100%;
+  background: var(--mg-bg);
+  color: var(--mg-ink);
+  border-color: var(--mg-control);
+  border-radius: 6px;
+  font-size: 12px;
+}
+.ls-about {
+  width: min(380px, calc(100vw - 32px));
+}
+.ls-about p {
+  margin: 10px 0 0;
+  color: var(--mg-muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+.ls-active-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-block: -3px 12px;
+}
+.ls-active-filters button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 27px;
+  max-width: 100%;
+  padding: 4px 8px;
+  border: 1px solid var(--mg-line);
+  border-radius: 5px;
+  background: var(--mg-soft);
+  color: var(--mg-muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.ls-dates {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-block: 4px 12px;
+  color: var(--mg-muted);
+  font-size: 11px;
+}
+.mg-log-studio .ls-dates input {
+  width: 145px;
+  height: 33px;
+  background: var(--mg-surface);
+  color: var(--mg-ink);
+  border-color: var(--mg-control);
+  font-size: 12px;
+}
+.ls-alert {
+  margin-block: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--mg-error);
+  background: var(--mg-error-bg);
+  color: var(--mg-error);
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.ls-list-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 16px 0 10px;
+  color: var(--mg-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.mg-log-studio .mg-table-wrap {
+  border-radius: var(--ls-radius);
+  border-color: var(--mg-line);
+  background: var(--mg-surface);
+}
+.mg-log-studio .mg-log-table th {
+  padding: 12px 15px;
+  font-size: 11px;
+  font-weight: 450;
+  background: var(--mg-side);
+  color: var(--mg-muted);
+}
+.mg-log-studio .mg-log-table td {
+  padding: 13px 15px;
+  border-bottom-color: var(--ls-subtle);
+}
+.mg-log-studio .mg-log-entry {
+  background: transparent;
+}
+.mg-log-studio .mg-log-time {
+  gap: 7px;
+}
+.mg-log-studio .mg-log-toggle {
+  width: 24px;
+  height: 28px;
+}
+.mg-log-studio .mg-log-table time > span:first-child {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--mg-ink);
+}
+.mg-log-studio .mg-log-table time > span:last-child {
+  margin-block-start: 4px;
+  font-size: 10px;
+  color: var(--mg-muted);
+}
+.mg-log-studio .mg-log-model {
+  font-weight: 500;
+  font-size: 12px;
+}
+.mg-log-studio .ls-endpoint {
+  display: block;
+  margin-block-start: 5px;
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--mg-muted);
+}
+.mg-log-studio .mg-log-result > .ls-outcome {
+  font-size: 11px;
+  font-weight: 500;
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+}
+.ls-outcome::before {
+  content: "";
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.mg-log-studio .mg-log-result > small {
+  margin-block-start: 5px;
+  font-size: 10px;
+}
+.mg-log-studio .mg-log-usage strong {
+  font-size: 13px;
+  font-weight: 550;
+}
+.mg-log-studio .mg-log-usage small {
+  margin-block-start: 5px;
+  font-size: 10px;
+  white-space: nowrap;
+}
+.mg-log-studio .mg-log-table td:last-child {
+  font-size: 11px;
+  color: var(--mg-muted);
+  text-align: end;
+}
+.ls-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-block: 14px 8px;
+  color: var(--mg-muted);
+  font-size: 11px;
+}
+.ls-pagination .mg-select {
+  width: 112px;
+  height: 32px;
+  background: transparent;
+  border-color: var(--mg-line);
+  font-size: 11px;
+}
+.ls-pagination > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ls-pagination .mg-button {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-color: var(--mg-line);
+}
+.ls-pagination > div > span {
+  padding-inline: 8px;
+}
+.ls-empty {
+  padding: 44px 16px;
+  text-align: center;
+  color: var(--mg-muted);
+  font-size: 12px;
+}
+.ls-empty h2,
+.ls-empty h3 {
+  margin-bottom: 8px;
+  font-size: 15px;
+  color: var(--mg-ink);
+  font-weight: 500;
+}
+.ls-empty p {
+  margin-bottom: 16px;
+}
+.ls-analysis.mg-token-panel {
+  border: 0;
+  padding: 0;
+  margin: 12px 0 0;
+}
+.ls-analysis-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 13px;
+}
+.ls-analysis-heading h2 {
+  font-size: 14px;
+  font-weight: 550;
+}
+.ls-analysis-tools {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.ls-analysis-tools .mg-button {
+  font-size: 11px;
+  color: var(--mg-muted);
+  height: 28px;
+  gap: 5px;
+  padding-inline: 8px;
+}
+.ls-usage-hero {
+  display: grid;
+  grid-template-columns: 1.1fr 1fr;
+  gap: 16px;
+}
+.ls-usage-card {
+  min-width: 0;
+  padding: 18px 24px 12px;
+  background: var(--mg-surface);
+  border: 1px solid var(--mg-line);
+  border-radius: 12px;
+}
+.ls-usage-card dl {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: 22px;
+  margin: 0;
+}
+.ls-usage-card dt {
+  color: var(--mg-muted);
+  font-size: 11px;
+  font-weight: 400;
+}
+.ls-usage-card dd {
+  margin: 7px 0 0;
+  line-height: 1.1;
+  letter-spacing: -0.035em;
+}
+.ls-token-total,
+.ls-cache-share {
+  grid-column: 1/-1;
+}
+.ls-token-total {
+  margin-bottom: 16px;
+}
+.ls-token-total dd {
+  font-size: 44px;
+  font-weight: 620;
+}
+.ls-token-total number-flow-react::part(compact),
+.ls-token-total .mg-static-unit.is-compact {
+  font-size: 0.48em;
+  font-weight: 500;
+  letter-spacing: 0;
+  margin-inline-start: 4px;
+  color: var(--mg-muted);
+}
+.ls-token-secondary dd {
+  font-size: 22px;
+  font-weight: 540;
+}
+.ls-cache-share dd {
+  font-size: 38px;
+  font-weight: 600;
+  color: var(--mg-success);
+}
+.ls-cache-share number-flow-react::part(percentSign),
+.ls-cache-share .mg-static-unit.is-percentSign {
+  font-size: 0.58em;
+}
+.ls-cache-meter {
+  grid-column: 1/-1;
+  height: 3px;
+  background: var(--mg-line);
+  overflow: hidden;
+  border-radius: 2px;
+  margin: 16px 0 14px;
+}
+.ls-cache-meter > dd {
+  margin: 0;
+  height: 100%;
+}
+.ls-cache-meter > dd > span {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--mg-success);
+  transform-origin: left center;
+  transition: transform 380ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.ls-cache-meter > dd > span[data-known="false"] {
+  visibility: hidden;
+}
+.ls-card-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 12px;
+  padding-top: 9px;
+  border-top: 1px solid var(--ls-subtle);
+  color: var(--mg-muted);
+  font-size: 10px;
+}
+.ls-analysis-plots {
+  margin-top: 17px;
+}
+.ls-chart-legend {
+  display: flex;
+  justify-content: flex-end;
+  gap: 16px;
+  margin-bottom: 10px;
+  font-size: 10px;
+  color: var(--mg-muted);
+}
+.ls-chart-legend > span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ls-chart-legend i {
+  width: 6px;
+  height: 6px;
+  border-radius: 1px;
+}
+.ls-chart-legend .is-input {
+  background: var(--mg-brand);
+}
+.ls-chart-legend .is-output {
+  background: var(--mg-success);
+}
+.ls-analysis .mg-token-chart {
+  padding: 16px 18px;
+  border-radius: 12px;
+  border-color: var(--mg-line);
+}
+.ls-analysis .mg-token-chart figcaption {
+  min-height: 0;
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.ls-analysis .mg-token-chart h3 {
+  font-size: 12px;
+  font-weight: 550;
+}
+.ls-analysis .mg-token-chart figcaption p {
+  margin: 0;
+  font-size: 10px;
+}
+.ls-analysis .mg-token-rank-heading .mg-select {
+  min-width: 90px;
+  width: 90px;
+  height: 28px;
+  font-size: 10px;
+  border-color: var(--mg-line);
+  background: transparent;
+}
+.ls-analysis .mg-token-plot {
+  height: 180px;
+}
+.ls-analysis .mg-token-data {
+  font-size: 11px;
+  margin-top: 12px;
+  color: var(--mg-muted);
+}
+.ls-chart-placeholder {
+  height: 260px;
+  display: grid;
+  place-items: center;
+  color: var(--mg-muted);
+  font-size: 12px;
+}
+.ls-tabs button:focus-visible,
+.ls-popover button:focus-visible,
+.ls-active-filters button:focus-visible {
+  outline: 2px solid var(--mg-brand);
+  outline-offset: 2px;
+}
+@media (hover: hover) {
+  .ls-tabs button:hover,
+  .ls-popover-heading button:hover {
+    color: var(--mg-ink);
+  }
+  .mg-log-studio .mg-log-entry:hover {
+    background: var(--mg-soft);
+  }
+  .ls-active-filters button:hover {
+    color: var(--mg-ink);
+  }
+}
+@media (max-width: 1000px) {
+  .ls-overview {
+    gap: 14px;
+    grid-template-columns: 1.1fr 1fr 1fr 1fr;
+  }
+  .ls-pending {
+    grid-column: 1/-1;
+    justify-self: end;
+    margin-top: -2px;
+  }
+  .ls-usage-card {
+    padding-inline: 18px;
+  }
+  .ls-token-total dd {
+    font-size: 38px;
+  }
+  .ls-token-secondary dd {
+    font-size: 20px;
+  }
+}
+@media (max-width: 740px) {
+  .ls-heading {
+    flex-wrap: wrap;
+    gap: 14px;
+  }
+  .ls-heading-actions {
+    margin-inline-start: auto;
+  }
+  .ls-overview {
+    margin-top: 22px;
+    grid-template-columns: 1fr 1fr;
+    row-gap: 20px;
+  }
+  .ls-stat-total dd {
+    font-size: 34px;
+  }
+  .ls-stat dd {
+    font-size: 27px;
+  }
+  .ls-stat-total dd {
+    font-size: 34px;
+  }
+  .ls-pending {
+    grid-column: 1/-1;
+  }
+  .ls-usage-hero {
+    grid-template-columns: 1fr;
+  }
+  .ls-toolbar > .mg-select {
+    flex: 1 1 160px;
+  }
+  .ls-search {
+    flex-basis: 180px;
+  }
+  .ls-live {
+    display: none;
+  }
+  .ls-heading-actions .mg-select {
+    width: 118px;
+  }
+  .ls-pagination {
+    flex-wrap: wrap;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ls-cache-meter > dd > span {
+    transition: none;
+  }
+}
+@media (forced-colors: active) {
+  .ls-tabs button[aria-selected="true"] {
+    outline: 1px solid Highlight;
+  }
+  .ls-status-dot,
+  .ls-live i,
+  .ls-outcome::before {
+    background: CanvasText;
+  }
+}

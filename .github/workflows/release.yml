@@ -1,0 +1,200 @@
+name: LumaGate Release
+
+on:
+  push:
+    branches: [release]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Keep queued pushes, not only the last one. Never cancel an in-flight publish.
+concurrency:
+  group: lumagate-release
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  gates:
+    if: github.repository == 'Restry/LumaGate' && github.ref == 'refs/heads/release'
+    uses: ./.github/workflows/ci.yml
+
+  reserve:
+    name: Reserve immutable version for source
+    needs: gates
+    if: github.repository == 'Restry/LumaGate' && github.ref == 'refs/heads/release'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    # Only the reservation job and final publisher can write contents.
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      published: ${{ steps.version.outputs.published }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.13"
+      - id: version
+        name: Reserve tag without creating a public release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/releasing/release.py reserve
+
+  build:
+    name: Build ${{ matrix.platform }}
+    needs: reserve
+    if: needs.reserve.outputs.published != 'true'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-arm64
+            os: macos-15
+            target: aarch64-apple-darwin
+            bundles: dmg
+          - platform: macos-x64
+            os: macos-15-intel
+            target: x86_64-apple-darwin
+            bundles: dmg
+          - platform: windows-x64
+            os: windows-2022
+            target: x86_64-pc-windows-msvc
+            bundles: nsis
+          - platform: linux-x64
+            os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            bundles: appimage,deb
+    defaults:
+      run:
+        shell: bash
+    env:
+      CARGO_INCREMENTAL: "0"
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+      VERSION: ${{ needs.reserve.outputs.version }}
+      PLATFORM: ${{ matrix.platform }}
+      TARGET: ${{ matrix.target }}
+      BUNDLES: ${{ matrix.bundles }}
+      # Allows AppImage tooling to run on runners without mounting via FUSE.
+      APPIMAGE_EXTRACT_AND_RUN: "1"
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.13"
+      - name: Set up pinned pnpm and Rust target
+        run: |
+          npm install --global corepack@0.34.6
+          corepack enable
+          corepack install
+          pnpm config set store-dir .pnpm-store
+          rustup show active-toolchain
+          rustup target add "$TARGET"
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          # No compiled target/bundle cache: never collect stale installers.
+          path: |
+            .pnpm-store
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: release-${{ matrix.platform }}-${{ hashFiles('pnpm-lock.yaml', 'src-tauri/Cargo.lock', 'rust-toolchain.toml') }}
+      - name: Install Linux bundle prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential pkg-config libssl-dev libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev libwebkit2gtk-4.1-dev patchelf libfuse2 file
+      - name: Stamp build checkout only
+        run: python scripts/releasing/release.py stamp --version "$VERSION"
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build macOS installer with ad-hoc signature
+        if: runner.os == 'macOS'
+        env:
+          APPLE_SIGNING_IDENTITY: "-"
+        run: pnpm tauri build --ci --target "$TARGET" --bundles "$BUNDLES" -- --locked
+      - name: Build unsigned Windows or Linux installers
+        if: runner.os != 'macOS'
+        run: pnpm tauri build --ci --target "$TARGET" --bundles "$BUNDLES" -- --locked
+      - name: Verify native bundle metadata
+        run: python scripts/releasing/verify_bundle.py --platform "$PLATFORM" --version "$VERSION"
+      - name: Stage exact platform inventory
+        run: python scripts/releasing/release.py stage --version "$VERSION" --platform "$PLATFORM" --output staged
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: installers-${{ matrix.platform }}
+          path: staged/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+          # These are temporary Actions artifacts, not public Release assets.
+          # Supports rerun-failed-jobs alongside retained successful matrix jobs.
+          overwrite: true
+
+  publish:
+    name: Verify all assets and publish once
+    needs: [reserve, build]
+    if: github.repository == 'Restry/LumaGate' && github.ref == 'refs/heads/release' && needs.reserve.outputs.published != 'true'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.reserve.outputs.version }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.13"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: installers-*
+          path: artifacts
+          merge-multiple: false
+          digest-mismatch: error
+      - name: Validate complete matrix and generate checksums
+        run: python scripts/releasing/release.py assemble --version "$VERSION" --input artifacts --output release-assets
+      - name: Upload privately then promote complete release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/releasing/release.py publish --version "$VERSION" --input release-assets
+
+  verify-existing:
+    name: Verify published rerun without overwriting
+    needs: reserve
+    if: needs.reserve.outputs.published == 'true'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    env:
+      VERSION: ${{ needs.reserve.outputs.version }}
+      TAG: ${{ needs.reserve.outputs.tag }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.13"
+      - name: Download original published assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download "$TAG" --repo Restry/LumaGate --dir published
+      - name: Verify original source and every download
+        run: python scripts/releasing/release.py verify --version "$VERSION" --input published

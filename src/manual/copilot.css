@@ -1,0 +1,76 @@
+.mg-dialog.mc-copilot-dialog {
+  width: min(460px, calc(100vw - 24px));
+  transition: none;
+}
+.mc-copilot-login {
+  display: grid;
+  gap: 12px;
+}
+.mc-copilot-login p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.mc-copilot-login section {
+  min-width: 0;
+}
+.mc-device-code {
+  display: block;
+  padding: 22px 12px;
+  margin: 0 0 14px;
+  text-align: center;
+  font-size: 30px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  color: var(--mg-ink);
+  background: var(--mg-soft);
+  border: 1px solid var(--mg-line);
+  border-radius: 7px;
+  user-select: all;
+  overflow-wrap: anywhere;
+}
+.mc-copilot-status {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--mg-muted);
+}
+.mc-copilot-status p {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.mc-copilot-status > span {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.mc-copilot-login small {
+  display: block;
+  margin-top: 7px;
+  color: var(--mg-muted);
+  font-size: 11px;
+}
+.mc-copilot-login > p[role="status"] {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding-block: 10px;
+  color: var(--mg-muted);
+}
+.mc-copilot-login [role="alert"] {
+  margin: 0;
+  color: var(--mg-error);
+  background: var(--mg-error-bg);
+}
+@media (max-width: 520px) {
+  .mc-device-code {
+    font-size: 24px;
+  }
+  .mg-dialog.mc-copilot-dialog .mg-dialog-footer {
+    flex-wrap: wrap;
+  }
+  .mg-dialog.mc-copilot-dialog .mg-dialog-footer .mg-button {
+    flex: 1;
+  }
+}

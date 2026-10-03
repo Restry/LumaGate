@@ -1,0 +1,4 @@
+# LumaGate code review ownership. Branch protection is configured separately.
+*                 @Restry
+/.github/         @Restry
+/src-tauri/       @Restry
