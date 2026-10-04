@@ -247,12 +247,31 @@ export function RequestLogTable({ rows }: { rows: RequestLog[] }) {
             <details open>
               <summary>Response · {outcome?.label}</summary>
               <p>
-                传输状态：{detail.responseState ?? "旧日志未记录"}
+                传输状态：
+                {detail.delivery
+                  ? { eof: "已结束", dropped: "已中断", error: "传输错误" }[
+                      detail.delivery.transport
+                    ]
+                  : (detail.responseState ?? "旧日志未记录")}
                 {outcome?.state === "pending" &&
                 detail.responseState !== "接收中"
                   ? " · 未记录或未确认模型终态，未计入成功率"
                   : ""}
               </p>
+              {detail.delivery && (
+                <p>
+                  下游协议：
+                  {
+                    {
+                      completed: "已完成",
+                      incomplete: "输出未完成",
+                      failed: "失败",
+                      unknown: "结束未确认",
+                    }[detail.delivery.completion]
+                  }
+                  。仅为网关观察结果，不代表客户端确认接收。
+                </p>
+              )}
               <pre>
                 {detail.responseState === "接收中" && detail.response == null
                   ? "正在接收响应…"

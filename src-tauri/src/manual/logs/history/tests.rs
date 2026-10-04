@@ -280,3 +280,104 @@ fn oversized_totals_are_flagged_instead_of_rounded_or_panicking() {
     assert!(result["analytics"]["total"].is_null());
     assert_eq!(result["stats"]["total"], 201);
 }
+
+#[test]
+fn completion_contract_matches_history_rows_filters_and_totals() {
+    let cases: Vec<Value> = serde_json::from_str(include_str!(
+        "../../../../../tests/manual/log-outcome-cases.json"
+    ))
+    .unwrap();
+    let temp = tempfile::tempdir().unwrap();
+    let conn = Connection::open(temp.path().join("requests.sqlite3")).unwrap();
+    conn.execute_batch("CREATE TABLE request_logs(id INTEGER PRIMARY KEY,record_json TEXT NOT NULL,receiving INTEGER NOT NULL);PRAGMA user_version=1;").unwrap();
+    for (id, case) in cases.iter().enumerate() {
+        let mut row = serde_json::to_value(entry(20, case["case"].as_str().unwrap())).unwrap();
+        row["id"] = json!(id);
+        row["streaming"] = json!(true);
+        row.as_object_mut()
+            .unwrap()
+            .extend(case["row"].as_object().unwrap().clone());
+        conn.execute(
+            "INSERT INTO request_logs VALUES(?1,?2,0)",
+            params![id, row.to_string()],
+        )
+        .unwrap();
+    }
+    drop(conn);
+    let logs = RequestLogs::open(temp.path()).unwrap();
+    let all = logs.query_history(&Query::default()).unwrap();
+    for row in all["rows"].as_array().unwrap() {
+        let case = &cases[row["id"].as_u64().unwrap() as usize];
+        assert_eq!(row["result"]["state"], case["state"], "{}", case["case"]);
+    }
+    for state in ["success", "failed", "pending"] {
+        let expected: Vec<u64> = cases
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| c["state"] == state)
+            .map(|(id, _)| id as u64)
+            .collect();
+        let filtered = logs
+            .query_history(&Query {
+                status: state.into(),
+                ..Query::default()
+            })
+            .unwrap();
+        let mut actual: Vec<u64> = filtered["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["id"].as_u64().unwrap())
+            .collect();
+        actual.sort_unstable();
+        assert_eq!(actual, expected);
+        assert_eq!(all["stats"][state], expected.len());
+    }
+}
+
+#[test]
+fn stale_failure_projection_rebuild_preserves_raw_completed_record() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("requests.sqlite3");
+    let mut conn = Connection::open(&path).unwrap();
+    conn.execute_batch("CREATE TABLE request_logs(id INTEGER PRIMARY KEY,record_json TEXT NOT NULL,receiving INTEGER NOT NULL);PRAGMA user_version=1;").unwrap();
+    let mut original = serde_json::to_value(entry(20, "legacy-completed")).unwrap();
+    original["completion"] = json!("completed");
+    original["responseState"] = json!("已中断");
+    original["streaming"] = json!(true);
+    let raw = original.to_string();
+    conn.execute("INSERT INTO request_logs VALUES(0,?1,0)", [&raw])
+        .unwrap();
+    initialize(&mut conn).unwrap();
+    conn.execute_batch("UPDATE manual_log_search_v1 SET outcome='failed',meta=json_set(meta,'$.outcome','failed','$.label','调用失败'); DROP TABLE IF EXISTS manual_log_projection_version;").unwrap();
+    drop(conn);
+    let logs = RequestLogs::open(temp.path()).unwrap();
+    let result = logs.query_history(&Query::default()).unwrap();
+    assert_eq!(
+        result["stats"],
+        json!({"total":1,"success":1,"failed":0,"pending":0})
+    );
+    assert_eq!(result["rows"][0]["responseState"], "已中断");
+    assert_eq!(
+        logs.query_history(&Query {
+            status: "failed".into(),
+            ..Query::default()
+        })
+        .unwrap()["matched"],
+        0
+    );
+    drop(logs);
+    let conn = Connection::open(&path).unwrap();
+    assert_eq!(
+        conn.query_row("SELECT record_json FROM request_logs WHERE id=0", [], |r| r
+            .get::<_, String>(0))
+            .unwrap(),
+        raw
+    );
+    drop(conn);
+    let reopened = RequestLogs::open(temp.path()).unwrap();
+    assert_eq!(
+        reopened.query_history(&Query::default()).unwrap()["stats"]["success"],
+        1
+    );
+}

@@ -62,6 +62,49 @@ const statusFilter = () =>
   screen.getByRole("combobox", { name: "按调用结果或 HTTP 状态筛选" });
 
 describe("历史日志查询与恢复", () => {
+  it("完成后关流保留传输事实，但不进入失败筛选", async () => {
+    const user = userEvent.setup();
+    rows = [
+      {
+        ...base,
+        id: 4862,
+        responseState: "已中断",
+        delivery: { completion: "completed", transport: "dropped" },
+      },
+      {
+        ...base,
+        id: 4887,
+        status: 400,
+        streaming: false,
+        completion: null,
+        responseState: "调用失败",
+        response: { error: { code: "invalid_request_body" } },
+      },
+    ];
+    render(<RequestLogs />);
+    await table();
+    await user.click(
+      screen.getByRole("button", { name: "展开请求 4862 的详情" }),
+    );
+    const detail = screen.getByRole("region", { name: "请求 4862 的详情" });
+    expect(within(detail).getByText(/传输状态：已中断/)).toBeInTheDocument();
+    expect(
+      within(detail).getByText(/仅为网关观察结果，不代表客户端确认接收/),
+    ).toBeInTheDocument();
+    await more(user);
+    await user.click(statusFilter());
+    await user.click(screen.getByRole("option", { name: "失败" }));
+    await waitFor(() =>
+      expect(
+        within(screen.getByRole("table", { name: "网关调用日志" })).queryByText(
+          /#4862/,
+        ),
+      ).not.toBeInTheDocument(),
+    );
+    expect(
+      screen.getByRole("button", { name: "展开请求 4887 的详情" }),
+    ).toBeInTheDocument();
+  });
   it("刷新等待期间保留旧数值与节点，不插入跳动的加载段落", async () => {
     const user = userEvent.setup();
     render(<RequestLogs />);

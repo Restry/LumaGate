@@ -40,6 +40,7 @@ fn completed_records_usage_and_stable_ids_survive_reopening() {
         "已结束",
         Some(usage(UsageState::Reported)),
         Some(crate::manual::completion::Completion::Completed),
+        None,
     );
     let expected = logs.persisted_snapshot().unwrap();
     assert_eq!(expected[0]["usage"]["totalTokens"], 125);

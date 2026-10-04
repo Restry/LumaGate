@@ -1,5 +1,5 @@
 //! Dedicated SQLite writer. No database I/O on response-body polling threads.
-use super::RequestLog;
+use super::{Delivery, RequestLog};
 use rusqlite::{params, Connection};
 use serde_json::{json, Value};
 use std::{
@@ -31,6 +31,7 @@ enum Message {
         state: String,
         usage: Value,
         completion: Value,
+        delivery: Option<Delivery>,
     },
     Read(mpsc::Sender<Result<Vec<Value>, String>>),
     Flush(mpsc::Sender<Result<(), String>>),
@@ -73,7 +74,8 @@ impl Store {
                             state,
                             usage,
                             completion,
-                        } => finish(&mut conn, id, response, state, usage, completion),
+                            delivery,
+                        } => finish(&mut conn, id, response, state, usage, completion, delivery),
                         Message::Read(reply) => {
                             let result = if health.load(Ordering::Relaxed) {
                                 Err(ERROR.into())
@@ -134,6 +136,7 @@ impl Store {
         state: &str,
         usage: Value,
         completion: Value,
+        delivery: Option<Delivery>,
     ) {
         self.enqueue(Message::Finish {
             id,
@@ -141,6 +144,7 @@ impl Store {
             state: state.into(),
             usage,
             completion,
+            delivery,
         });
     }
     pub(super) fn healthy(&self) -> bool {
@@ -288,6 +292,7 @@ fn finish(
     state: String,
     usage: Value,
     completion: Value,
+    delivery: Option<Delivery>,
 ) -> rusqlite::Result<()> {
     let tx = conn.transaction()?;
     let mut row = decode(tx.query_row(
@@ -299,6 +304,7 @@ fn finish(
     row["responseState"] = json!(state);
     row["usage"] = usage;
     row["completion"] = completion;
+    row["delivery"] = json!(delivery);
     tx.execute(
         "UPDATE request_logs SET record_json=?2, receiving=0 WHERE id=?1",
         params![id, row.to_string()],

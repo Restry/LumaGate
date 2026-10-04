@@ -150,7 +150,6 @@ pub struct Collector {
     result: Value,
     tools: Vec<Value>,
     truncated: bool,
-    terminal: bool,
 }
 impl Collector {
     pub fn new(streaming: bool) -> Self {
@@ -162,7 +161,6 @@ impl Collector {
             result: Value::Null,
             tools: vec![],
             truncated: false,
-            terminal: false,
         }
     }
     pub fn feed(&mut self, bytes: &[u8]) {
@@ -197,7 +195,6 @@ impl Collector {
             return;
         };
         if data.trim() == "[DONE]" {
-            self.terminal = true;
             return;
         }
         let Ok(value) = serde_json::from_str::<Value>(data.trim()) else {
@@ -208,7 +205,6 @@ impl Collector {
             event,
             "response.completed" | "response.failed" | "response.incomplete" | "message_stop"
         ) {
-            self.terminal = true;
             if let Some(response) = value.get("response") {
                 self.result = response_fields(response);
             }
@@ -258,9 +254,6 @@ impl Collector {
             self.result["usage"] = usage.clone();
         }
     }
-    pub fn terminal_seen(&self) -> bool {
-        self.terminal
-    }
     pub fn interrupted(&mut self) {
         if !self.streaming {
             self.truncated = true;
@@ -286,10 +279,7 @@ impl Collector {
             self.result.clone()
         } else {
             match serde_json::from_slice::<Value>(&self.pending) {
-                Ok(value) => {
-                    self.terminal = true;
-                    response_fields(&value)
-                }
+                Ok(value) => response_fields(&value),
                 Err(_) if self.truncated => json!("[响应不完整或超过预览限制，未保留原始片段]"),
                 Err(_) => json!(String::from_utf8_lossy(&self.pending)),
             }

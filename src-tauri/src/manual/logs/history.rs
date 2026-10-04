@@ -1,5 +1,5 @@
 //! Indexed, read-only history queries. Derived metadata never contains request/response text.
-use rusqlite::{params, params_from_iter, types::Value as Sql, Connection};
+use rusqlite::{params, params_from_iter, types::Value as Sql, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashMap};
@@ -126,6 +126,9 @@ fn project(id: u64, row: &Value) -> Meta {
     let http = row.get("status").and_then(Value::as_u64).unwrap_or(0) as u16;
     let transport = text(row, "responseState");
     let completion = text(row, "completion");
+    let delivery = row.get("delivery").filter(|v| v.is_object());
+    let downstream = delivery.map(|v| text(v, "completion"));
+    let closure = delivery.map(|v| text(v, "transport"));
     let status = text(response, "status");
     let legacy_finish = response
         .get("choices")
@@ -139,6 +142,13 @@ fn project(id: u64, row: &Value) -> Meta {
                     )
                 })
         });
+    let completed = match downstream.as_deref() {
+        Some(value) => value == "completed",
+        None => {
+            completion == "completed"
+                || (completion != "unknown" && (status == "completed" || legacy_finish))
+        }
+    };
     let (outcome, label) = if http == 429
         || matches!(
             code.as_str(),
@@ -147,27 +157,50 @@ fn project(id: u64, row: &Value) -> Meta {
         ("failed", "调用失败 · 限流（429）")
     } else if status == "cancelled" {
         ("failed", "调用失败 · 已取消")
-    } else if status == "incomplete" || completion == "incomplete" {
-        ("failed", "调用失败 · 输出未完成")
     } else if !(200..300).contains(&http)
         || completion == "failed"
+        || downstream.as_deref() == Some("failed")
         || status == "failed"
         || error.is_some()
         || matches!(envelope_kind.as_str(), "error" | "response.failed")
-        || transport.starts_with("调用失败")
-        || transport.starts_with("已中断")
         || transport == "传输错误"
+        || closure.as_deref() == Some("error")
     {
+        ("failed", "调用失败")
+    } else if status == "incomplete"
+        || completion == "incomplete"
+        || envelope_kind == "response.incomplete"
+        || downstream.as_deref() == Some("incomplete")
+    {
+        ("failed", "调用失败 · 输出未完成")
+    } else if transport.starts_with("调用失败") {
         ("failed", "调用失败")
     } else if transport == "接收中" {
         ("pending", "接收中")
-    } else if completion == "unknown" {
-        ("pending", "结束未确认")
-    } else if completion == "completed"
-        || status == "completed"
-        || legacy_finish
-        || (row.get("streaming").and_then(Value::as_bool) != Some(true)
-            && (transport.is_empty() || transport == "已结束"))
+    } else if completed
+        && (transport.is_empty() || matches!(transport.as_str(), "已结束" | "已中断"))
+    {
+        (
+            "success",
+            if transport == "已中断" || closure.as_deref() == Some("dropped") {
+                "协议完成 · 连接已关闭（交付未确认）"
+            } else {
+                "调用成功"
+            },
+        )
+    } else if transport.starts_with("已中断") {
+        ("failed", "调用失败")
+    } else if delivery.is_some() || completion == "unknown" {
+        (
+            "pending",
+            if completion == "completed" {
+                "上游已完成 · 下游结束未确认"
+            } else {
+                "结束未确认"
+            },
+        )
+    } else if row.get("streaming").and_then(Value::as_bool) != Some(true)
+        && (transport.is_empty() || transport == "已结束")
     {
         ("success", "调用成功")
     } else {
@@ -246,15 +279,38 @@ fn project(id: u64, row: &Value) -> Meta {
 }
 
 pub(super) fn initialize(conn: &mut Connection) -> rusqlite::Result<()> {
-    conn.execute_batch("CREATE TABLE IF NOT EXISTS manual_log_search_v1(id INTEGER PRIMARY KEY, at INTEGER, model TEXT, endpoint TEXT, caller TEXT, outcome TEXT, http INTEGER, error_code TEXT, response_id TEXT, meta TEXT NOT NULL);
+    // Version only the disposable projection; request_logs/user_version stay untouched.
+    // Mark all rows dirty atomically before publishing the version, so interrupted
+    // backfills resume through the existing bounded dirty queue on the next open.
+    let tx = conn.transaction()?;
+    tx.execute_batch("CREATE TABLE IF NOT EXISTS manual_log_search_v1(id INTEGER PRIMARY KEY, at INTEGER, model TEXT, endpoint TEXT, caller TEXT, outcome TEXT, http INTEGER, error_code TEXT, response_id TEXT, meta TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS manual_log_time_v1 ON manual_log_search_v1(at,id);
       CREATE INDEX IF NOT EXISTS manual_log_outcome_v1 ON manual_log_search_v1(outcome,id);
       CREATE INDEX IF NOT EXISTS manual_log_caller_v1 ON manual_log_search_v1(caller,id);
       CREATE TABLE IF NOT EXISTS manual_log_dirty_v1(id INTEGER PRIMARY KEY);
       CREATE TRIGGER IF NOT EXISTS manual_log_insert_v1 AFTER INSERT ON request_logs BEGIN INSERT OR IGNORE INTO manual_log_dirty_v1 VALUES(new.id); END;
       CREATE TRIGGER IF NOT EXISTS manual_log_update_v1 AFTER UPDATE ON request_logs BEGIN INSERT OR IGNORE INTO manual_log_dirty_v1 VALUES(new.id); END;
-      CREATE TRIGGER IF NOT EXISTS manual_log_delete_v1 AFTER DELETE ON request_logs BEGIN DELETE FROM manual_log_search_v1 WHERE id=old.id; DELETE FROM manual_log_dirty_v1 WHERE id=old.id; END;")?;
-    conn.execute("INSERT OR IGNORE INTO manual_log_dirty_v1 SELECT r.id FROM request_logs r LEFT JOIN manual_log_search_v1 s ON s.id=r.id WHERE s.id IS NULL",[])?;
+      CREATE TRIGGER IF NOT EXISTS manual_log_delete_v1 AFTER DELETE ON request_logs BEGIN DELETE FROM manual_log_search_v1 WHERE id=old.id; DELETE FROM manual_log_dirty_v1 WHERE id=old.id; END;
+      CREATE TABLE IF NOT EXISTS manual_log_projection_version(id INTEGER PRIMARY KEY CHECK(id=1), version INTEGER NOT NULL);")?;
+    let version: Option<u32> = tx
+        .query_row(
+            "SELECT version FROM manual_log_projection_version WHERE id=1",
+            [],
+            |r| r.get(0),
+        )
+        .optional()?;
+    if version != Some(2) {
+        tx.execute(
+            "INSERT OR IGNORE INTO manual_log_dirty_v1 SELECT id FROM request_logs",
+            [],
+        )?;
+        tx.execute(
+            "INSERT OR REPLACE INTO manual_log_projection_version VALUES(1,2)",
+            [],
+        )?;
+    }
+    tx.execute("INSERT OR IGNORE INTO manual_log_dirty_v1 SELECT r.id FROM request_logs r LEFT JOIN manual_log_search_v1 s ON s.id=r.id WHERE s.id IS NULL",[])?;
+    tx.commit()?;
     sync_dirty(conn)
 }
 pub(super) fn sync_dirty(conn: &mut Connection) -> rusqlite::Result<()> {

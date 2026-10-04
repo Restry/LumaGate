@@ -1,0 +1,143 @@
+[
+  {
+    "case": "legacy completed with closed connection",
+    "state": "success",
+    "row": {
+      "completion": "completed",
+      "responseState": "已中断",
+      "response": { "truncated": true }
+    }
+  },
+  {
+    "case": "downstream terminal then drop",
+    "state": "success",
+    "row": {
+      "completion": "completed",
+      "responseState": "已中断",
+      "delivery": { "completion": "completed", "transport": "dropped" }
+    }
+  },
+  {
+    "case": "downstream completed without upstream observation",
+    "state": "success",
+    "row": {
+      "completion": "unknown",
+      "responseState": "已中断",
+      "delivery": { "completion": "completed", "transport": "dropped" }
+    }
+  },
+  {
+    "case": "upstream terminal is not downstream terminal",
+    "state": "failed",
+    "row": {
+      "completion": "completed",
+      "responseState": "已中断",
+      "delivery": { "completion": "unknown", "transport": "dropped" }
+    }
+  },
+  {
+    "case": "upstream completed but downstream EOF unconfirmed",
+    "state": "pending",
+    "row": {
+      "completion": "completed",
+      "responseState": "已结束",
+      "delivery": { "completion": "unknown", "transport": "eof" }
+    }
+  },
+  {
+    "case": "real transport error after terminal",
+    "state": "failed",
+    "row": {
+      "completion": "completed",
+      "responseState": "传输错误",
+      "delivery": { "completion": "completed", "transport": "error" }
+    }
+  },
+  {
+    "case": "explicit protocol error overrides terminal",
+    "state": "failed",
+    "row": {
+      "completion": "completed",
+      "responseState": "已中断",
+      "response": {
+        "status": "failed",
+        "error": { "code": "rate_limit_exceeded" }
+      },
+      "delivery": { "completion": "completed", "transport": "dropped" }
+    }
+  },
+  {
+    "case": "downstream failure after completion",
+    "state": "failed",
+    "row": {
+      "completion": "completed",
+      "responseState": "已结束",
+      "delivery": { "completion": "failed", "transport": "eof" }
+    }
+  },
+  {
+    "case": "upstream failure despite downstream completion",
+    "state": "failed",
+    "row": {
+      "completion": "failed",
+      "responseState": "已结束",
+      "delivery": { "completion": "completed", "transport": "eof" }
+    }
+  },
+  {
+    "case": "incomplete does not become success",
+    "state": "failed",
+    "row": {
+      "completion": "completed",
+      "responseState": "已结束",
+      "delivery": { "completion": "incomplete", "transport": "eof" }
+    }
+  },
+  {
+    "case": "HTTP error before output",
+    "state": "failed",
+    "row": {
+      "status": 400,
+      "completion": "completed",
+      "responseState": "已结束"
+    }
+  },
+  {
+    "case": "unknown interrupted",
+    "state": "failed",
+    "row": { "completion": "unknown", "responseState": "已中断" }
+  },
+  {
+    "case": "legacy interrupted without terminal",
+    "state": "failed",
+    "row": { "completion": null, "responseState": "已中断" }
+  },
+  {
+    "case": "unknown EOF",
+    "state": "pending",
+    "row": { "completion": "unknown", "responseState": "已结束" }
+  },
+  {
+    "case": "legacy stream EOF without terminal",
+    "state": "pending",
+    "row": { "completion": null, "responseState": "已结束" }
+  },
+  {
+    "case": "inflight cannot be settled early",
+    "state": "pending",
+    "row": { "completion": "completed", "responseState": "接收中" }
+  },
+  {
+    "case": "legacy restart interruption is not generic close",
+    "state": "failed",
+    "row": {
+      "completion": "completed",
+      "responseState": "已中断（上次运行未结束）"
+    }
+  },
+  {
+    "case": "legacy completed EOF",
+    "state": "success",
+    "row": { "completion": "completed", "responseState": "已结束" }
+  }
+]

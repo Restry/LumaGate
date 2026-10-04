@@ -22,6 +22,8 @@ use std::{
 const CAPACITY: usize = 200;
 pub mod history;
 #[cfg(test)]
+mod lifecycle_tests;
+#[cfg(test)]
 mod persistence_tests;
 mod storage;
 
@@ -94,6 +96,21 @@ pub struct RequestLog {
     pub response_state: String,
     pub usage: Option<super::token_usage::Usage>,
     pub completion: Option<super::completion::Completion>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub delivery: Option<Delivery>,
+}
+/// Evidence observed while offering body frames downstream, not a receipt acknowledgement.
+#[derive(Clone, Copy, Serialize)]
+pub struct Delivery {
+    pub completion: super::completion::Completion,
+    pub transport: Transport,
+}
+#[derive(Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Transport {
+    Eof,
+    Dropped,
+    Error,
 }
 #[derive(Default)]
 pub struct RequestLogs {
@@ -172,7 +189,7 @@ impl RequestLogs {
         state: &str,
         usage: Option<super::token_usage::Usage>,
     ) {
-        self.finish_observed(id, response, state, usage, None);
+        self.finish_observed(id, response, state, usage, None, None);
     }
     fn finish_observed(
         &self,
@@ -181,6 +198,7 @@ impl RequestLogs {
         state: &str,
         usage: Option<super::token_usage::Usage>,
         completion: Option<super::completion::Completion>,
+        delivery: Option<Delivery>,
     ) {
         // Stream termination is not proof of model success. Preserve the actual HTTP code,
         // but persist a failed outcome for explicit protocol errors (also after headers).
@@ -189,6 +207,9 @@ impl RequestLogs {
         let code = error
             .and_then(|error| error.get("code").or_else(|| error.get("type")))
             .and_then(Value::as_str);
+        let protocol = completion
+            .unwrap_or_default()
+            .merge(delivery.map(|value| value.completion).unwrap_or_default());
         let state = if matches!(
             code,
             Some("rate_limit_exceeded" | "rate_limit_error" | "too_many_requests")
@@ -201,10 +222,10 @@ impl RequestLogs {
                 envelope.get("status").and_then(Value::as_str),
                 Some("failed" | "cancelled")
             )
-            || completion == Some(super::completion::Completion::Failed)
+            || protocol == super::completion::Completion::Failed
         {
             "调用失败"
-        } else if completion == Some(super::completion::Completion::Incomplete) {
+        } else if protocol == super::completion::Completion::Incomplete {
             "调用失败 · 输出未完成"
         } else {
             state
@@ -217,6 +238,7 @@ impl RequestLogs {
                 state,
                 serde_json::to_value(&usage).expect("usage is serializable"),
                 serde_json::to_value(completion).expect("completion is serializable"),
+                delivery,
             );
         }
         if let Some(row) = rows.iter_mut().find(|row| row.id == id) {
@@ -224,6 +246,7 @@ impl RequestLogs {
             row.response_state = state.into();
             row.usage = usage;
             row.completion = completion;
+            row.delivery = delivery;
         }
     }
     pub fn snapshot(&self) -> Vec<RequestLog> {
@@ -310,6 +333,7 @@ struct CaptureBody {
     logs: Arc<RequestLogs>,
     id: u64,
     collector: Collector,
+    downstream: Option<super::token_usage::SseCollector>,
     usage: super::token_usage::Tracker,
     secrets: Vec<String>,
     finished: bool,
@@ -323,12 +347,16 @@ impl CaptureBody {
                 self.collector.interrupted();
             }
             let response = self.collector.finish(&self.secrets);
-            // 客户端读到协议结束标记后可能主动关流，不应把完整回答标成中断。
-            let state = if state == "已中断" && self.collector.terminal_seen() {
-                "已结束"
-            } else {
-                state
-            };
+            // Preview limits do not determine completion. Do not flush an unfinished SSE
+            // event on Drop: only framed events observed downstream are terminal evidence.
+            let delivery = self.downstream.as_ref().map(|collector| Delivery {
+                completion: collector.completion(),
+                transport: match state {
+                    "已结束" => Transport::Eof,
+                    "传输错误" => Transport::Error,
+                    _ => Transport::Dropped,
+                },
+            });
             let observed = self.usage.completion();
             let completion = (self.streaming || observed != super::completion::Completion::Unknown)
                 .then_some(observed);
@@ -338,6 +366,7 @@ impl CaptureBody {
                 state,
                 self.usage.closed_snapshot(),
                 completion,
+                delivery,
             );
         }
     }
@@ -355,6 +384,9 @@ impl HttpBody for CaptureBody {
             Poll::Ready(Some(Ok(frame))) => {
                 if let Some(data) = frame.data_ref() {
                     this.collector.feed(data);
+                    if let Some(collector) = &mut this.downstream {
+                        collector.feed(data);
+                    }
                 }
                 if this.body.is_end_stream() {
                     this.finish("已结束");
@@ -447,6 +479,7 @@ pub async fn capture(
                     response_state: "接收中".into(),
                     usage: trace.usage.snapshot(),
                     completion: None,
+                    delivery: None,
                 });
                 let (parts, body) = response.into_parts();
                 // 按原始帧旁路观察，保留字节、背压和 trailers，不等待完整输出才向客户端发送。
@@ -455,6 +488,7 @@ pub async fn capture(
                     logs,
                     id,
                     collector: Collector::new(streaming),
+                    downstream: streaming.then(super::token_usage::SseCollector::for_delivery),
                     streaming,
                     usage: trace.usage,
                     secrets: trace.secrets,
@@ -490,6 +524,7 @@ mod tests {
             logs: logs.clone(),
             id,
             collector: Collector::new(false),
+            downstream: None,
             streaming: false,
             usage: super::super::token_usage::Tracker::default(),
             secrets: vec![],

@@ -1,6 +1,6 @@
 [package]
 name = "lumagate"
-version = "3.24.2"
+version = "3.24.4"
 description = "LumaGate — local model gateway for Pi, Claude Code and Codex"
 authors = ["Restry", "LumaGate contributors"]
 license = "MIT"

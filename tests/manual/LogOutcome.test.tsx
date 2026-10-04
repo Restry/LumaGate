@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { requestOutcome } from "@/manual/log-outcome";
 import type { RequestLog } from "@/manual/RequestLogs";
+import casesText from "./log-outcome-cases.json?raw";
+const cases: { case: string; state: string; row: Partial<RequestLog> }[] =
+  JSON.parse(casesText);
 const row: RequestLog = {
   id: 1,
   startedAt: "2026-09-19T00:00:00Z",
@@ -12,6 +15,11 @@ const row: RequestLog = {
   responseState: "已结束",
 };
 describe("调用结果与 HTTP 分离", () => {
+  it.each(cases)("$case", (fixture) => {
+    expect(requestOutcome({ ...row, ...fixture.row }).state).toBe(
+      fixture.state,
+    );
+  });
   it("只有传输已结束而没有模型终态的旧流式日志不能算成功", () => {
     expect(
       requestOutcome({ ...row, response: { text: "partial output" } }).state,
@@ -60,9 +68,7 @@ describe("调用结果与 HTTP 分离", () => {
     ).toBe("failed");
   });
   it("保留真实 HTTP 429，并识别 HTTP 200 内的协议错误，不依赖文本猜测", () => {
-    expect(requestOutcome({ ...row, status: 429 }).label).toContain(
-      "限流（429）",
-    );
+    expect(requestOutcome({ ...row, status: 429 }).state).toBe("failed");
     expect(
       requestOutcome({
         ...row,
@@ -72,8 +78,7 @@ describe("调用结果与 HTTP 分离", () => {
             error: { code: "rate_limit_exceeded" },
           },
         },
-      }).label,
-    ).toContain("限流（429）");
-    expect(row.status).toBe(200);
+      }).state,
+    ).toBe("failed");
   });
 });

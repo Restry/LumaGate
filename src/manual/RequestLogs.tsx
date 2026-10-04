@@ -31,6 +31,10 @@ export interface RequestLog {
   response?: unknown;
   responseState?: string;
   completion?: "unknown" | "completed" | "failed" | "incomplete" | null;
+  delivery?: {
+    completion: "unknown" | "completed" | "failed" | "incomplete";
+    transport: "eof" | "dropped" | "error";
+  } | null;
   usage?: TokenUsage | null;
   result?: { state: "success" | "failed" | "pending"; label: string };
 }

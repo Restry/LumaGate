@@ -410,8 +410,9 @@ pub fn record_body(bytes: &[u8], still_encoded: bool) {
     tracker.publish(accumulator.result(wire, true));
 }
 
-struct SseCollector {
+pub(super) struct SseCollector {
     wire: Wire,
+    observe_usage: bool,
     line: Vec<u8>,
     data: Vec<u8>,
     event: Kind,
@@ -421,9 +422,17 @@ struct SseCollector {
     completion_invalid: bool,
 }
 impl SseCollector {
+    /// Reuse SSE framing and protocol parsing without collecting downstream usage.
+    pub(super) fn for_delivery() -> Self {
+        Self {
+            observe_usage: false,
+            ..Self::new(Wire::Responses)
+        }
+    }
     fn new(wire: Wire) -> Self {
         Self {
             wire,
+            observe_usage: true,
             line: vec![],
             data: vec![],
             event: Kind::Other,
@@ -433,9 +442,9 @@ impl SseCollector {
             completion_invalid: false,
         }
     }
-    fn completion(&self) -> Completion {
-        if self.completion == Completion::Failed {
-            return Completion::Failed;
+    pub(super) fn completion(&self) -> Completion {
+        if matches!(self.completion, Completion::Failed | Completion::Incomplete) {
+            return self.completion;
         }
         if self.accumulator.limited || self.completion_invalid {
             Completion::Unknown
@@ -443,7 +452,7 @@ impl SseCollector {
             self.completion
         }
     }
-    fn feed(&mut self, bytes: &[u8]) {
+    pub(super) fn feed(&mut self, bytes: &[u8]) {
         for &byte in bytes {
             if byte == b'\n' {
                 self.line();
@@ -506,6 +515,9 @@ impl SseCollector {
                 self.completion = self.completion.merge(value).merge(named);
             }
             Err(_) => self.completion_invalid = true,
+        }
+        if !self.observe_usage {
+            return;
         }
         match serde_json::from_slice::<Envelope>(&data) {
             Ok(mut envelope) => {
