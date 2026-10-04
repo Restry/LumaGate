@@ -1,5 +1,11 @@
 # LumaGate 变更记录
 
+## Windows ARM64 发布支持
+
+- 新发布增加 `LumaGate-VERSION-windows-arm64.exe`，目标为 `aarch64-pc-windows-msvc`；保留 Windows x64、macOS 双架构及 Linux AppImage/deb，共六个安装包、两个校验文件。
+- Windows 使用 7-Zip 解包验证主程序 PE Machine、版本、品牌与摘要，回执纳入 BUILD-INFO；NSIS 外壳架构不代表应用架构。历史 3.24.2 资产与校验契约保留，不覆盖重建。
+- 未签名 Windows 分发，缺失 WebView2 时仍需联网安装对应设备架构的运行时。构建和包校验不代表 ARM64 Windows 安装或运行验收；不改本地应用、流式转换或用户数据。
+
 ## 3.24.2
 
 - 修复 Chat Completions 转 Responses 流时，迟到或变化的上游 ID 覆盖已发送 response ID、导致按 ID 组装的下游出现重复回复的问题。首事件缺少 ID 时按请求生成唯一 ID；保留原生 Responses 的服务器 ID、续轮状态及各输出项和工具调用的独立身份。

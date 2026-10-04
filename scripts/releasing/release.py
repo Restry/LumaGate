@@ -20,6 +20,7 @@ PLATFORMS = {
     "macos-arm64": ("aarch64-apple-darwin", {"dmg": "dmg/*.dmg"}),
     "macos-x64": ("x86_64-apple-darwin", {"dmg": "dmg/*.dmg"}),
     "windows-x64": ("x86_64-pc-windows-msvc", {"exe": "nsis/*.exe"}),
+    "windows-arm64": ("aarch64-pc-windows-msvc", {"exe": "nsis/*.exe"}),
     "linux-x64": (
         "x86_64-unknown-linux-gnu",
         {
@@ -28,6 +29,41 @@ PLATFORMS = {
         },
     ),
 }
+WINDOWS_MACHINES = {"windows-x64": 0x8664, "windows-arm64": 0xAA64}
+INVENTORY_SCHEMA = 2
+
+
+def inventory_platforms(info, version):
+    schema = info.get("schema", 1)
+    if schema == 1:
+        # Existing public assets are immutable, not incomplete new releases.
+        require(
+            semver(version) <= (3, 24, 2),
+            "New releases require the ARM64 inventory schema",
+        )
+        return {p: spec for p, spec in PLATFORMS.items() if p != "windows-arm64"}
+    require(schema == INVENTORY_SCHEMA, "Unsupported release inventory schema")
+    return PLATFORMS
+
+
+def validate_windows_payload(build):
+    if build["platform"] not in WINDOWS_MACHINES:
+        return
+    receipt = build.get("windows_payload", {})
+    payload = receipt.get("executable", {})
+    installer = receipt.get("installer", {})
+    asset = build["assets"][0]
+    require(
+        installer.get("sha256") == asset["sha256"]
+        and installer.get("size") == asset["size"]
+        and payload.get("machine") == WINDOWS_MACHINES[build["platform"]]
+        and payload.get("version") == build["version"]
+        and payload.get("product") == "LumaGate"
+        and payload.get("size", 0) > 0
+        and re.fullmatch(r"[0-9a-f]{64}", payload.get("sha256", ""))
+        and Path(payload.get("name", "")).suffix == ".exe",
+        f"Missing or mismatched Windows payload receipt: {build['platform']}",
+    )
 
 
 def require(condition, message):
@@ -323,16 +359,17 @@ def stage(root, version, sha, platform, output):
     for source, name in sources:
         shutil.copyfile(source, output / name)
         assets.append(file_record(output / name))
-    write_json(
-        output / "build.json",
-        {
-            "version": version,
-            "sha": sha,
-            "platform": platform,
-            "target": target,
-            "assets": assets,
-        },
-    )
+    build = {
+        "version": version,
+        "sha": sha,
+        "platform": platform,
+        "target": target,
+        "assets": assets,
+    }
+    if platform in WINDOWS_MACHINES:
+        build["windows_payload"] = read_json(bundle.parent / "windows-payload.json")
+        validate_windows_payload(build)
+    write_json(output / "build.json", build)
     print(f"Staged {platform}: {', '.join(a['name'] for a in assets)}")
 
 
@@ -340,7 +377,7 @@ def assemble(source, output, version, sha):
     require(not output.exists(), "Assembly destination must be new")
     require(
         {p.name for p in source.iterdir()} == {f"installers-{p}" for p in PLATFORMS},
-        "Expected exactly four platform artifact directories",
+        f"Expected exactly {len(PLATFORMS)} platform artifact directories",
     )
     records = []
     sources = []
@@ -363,6 +400,7 @@ def assemble(source, output, version, sha):
             sorted(build["assets"], key=lambda a: a["name"]) == actual,
             f"Asset checksum/size mismatch in {platform}",
         )
+        validate_windows_payload(build)
         records.append(build)
         sources.extend(directory / name for name in sorted(expected))
     output.mkdir(parents=True)
@@ -371,6 +409,7 @@ def assemble(source, output, version, sha):
     write_json(
         output / "BUILD-INFO.json",
         {
+            "schema": INVENTORY_SCHEMA,
             "repository": REPOSITORY,
             "source": sha,
             "version": version,
@@ -387,15 +426,16 @@ def assemble(source, output, version, sha):
 
 
 def validate_assets(directory, version, sha):
-    expected = set().union(*(names(version, p) for p in PLATFORMS)) | {
+    info = read_json(directory / "BUILD-INFO.json")
+    platforms = inventory_platforms(info, version)
+    expected = set().union(*(names(version, p) for p in platforms)) | {
         "BUILD-INFO.json",
         "SHA256SUMS",
     }
     require(
         {p.name for p in directory.iterdir()} == expected,
-        "Release must contain exactly seven assets",
+        f"Release must contain exactly {len(expected)} assets",
     )
-    info = read_json(directory / "BUILD-INFO.json")
     require(
         (info["source"], info["version"], info["tag"], info["repository"])
         == (sha, version, PREFIX + version, REPOSITORY),
@@ -403,8 +443,8 @@ def validate_assets(directory, version, sha):
     )
     records = [file_record(directory / name) for name in sorted(expected)]
     require(
-        len(info["platforms"]) == len(PLATFORMS)
-        and {build["platform"] for build in info["platforms"]} == set(PLATFORMS),
+        len(info["platforms"]) == len(platforms)
+        and {build["platform"] for build in info["platforms"]} == set(platforms),
         "Release platform provenance is incomplete",
     )
     by_name = {record["name"]: record for record in records}
@@ -417,6 +457,8 @@ def validate_assets(directory, version, sha):
             == [by_name[name] for name in sorted(names(version, platform))],
             f"Release platform provenance mismatch: {platform}",
         )
+        if info.get("schema", 1) == INVENTORY_SCHEMA:
+            validate_windows_payload(build)
     expected_sums = "".join(
         f"{r['sha256']}  {r['name']}\n" for r in records if r["name"] != "SHA256SUMS"
     )
@@ -464,6 +506,11 @@ def release_notes(version, sha, assets):
         "when later chunks change IDs. Eight loopback HTTP replay cases passed; the original remote "
         "GPT-6 client trace was unavailable, so exact-client success is not claimed. "
         "Native Responses IDs, opaque state and separate tool/item identities remain unchanged.\n\n"
+        "Native Windows ARM64 and x64 installers are provided separately. "
+        "BUILD-INFO.json includes extracted NSIS app PE machine/version/hash receipts; "
+        "the installer bootstrap itself may be x86. Windows needs WebView2; the default "
+        "online bootstrapper installs the runtime matching the device architecture if missing. "
+        "Windows ARM64 installation and runtime smoke testing are not claimed.\n\n"
         "Unsigned distribution: macOS uses ad-hoc signing, NOT Apple notarization or Gatekeeper approval. "
         "Windows may show SmartScreen/unknown publisher warnings. Linux AppImage needs execute permission "
         "and may need FUSE; the Linux build baseline is Ubuntu 22.04. "
@@ -580,8 +627,8 @@ def main():
     elif args.command == "publish":
         publish(api, args.input, args.version, args.sha)
     elif args.command == "verify":
-        validate_assets(args.input, args.version, args.sha)
-        print("Verified all seven release assets and checksums")
+        records = validate_assets(args.input, args.version, args.sha)
+        print(f"Verified all {len(records)} release assets and checksums")
 
 
 if __name__ == "__main__":

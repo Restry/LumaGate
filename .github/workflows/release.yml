@@ -68,6 +68,10 @@ jobs:
             os: windows-2022
             target: x86_64-pc-windows-msvc
             bundles: nsis
+          - platform: windows-arm64
+            os: windows-2022
+            target: aarch64-pc-windows-msvc
+            bundles: nsis
           - platform: linux-x64
             os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
@@ -128,6 +132,22 @@ jobs:
           pnpm config set store-dir .pnpm-store
           rustup show active-toolchain
           rustup target add "$TARGET"
+      - name: Verify Windows ARM64 compiler and linker early
+        if: matrix.platform == 'windows-arm64'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
+          $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.ARM64 -property installationPath
+          if (-not $vs) { throw 'MSVC ARM64 build tools are missing' }
+          Write-Output "ARM64 Visual Studio: $vs"
+          $source = Join-Path $env:RUNNER_TEMP 'lumagate-arm64-toolchain.rs'
+          $binary = Join-Path $env:RUNNER_TEMP 'lumagate-arm64-toolchain.exe'
+          Set-Content -Path $source -Value 'fn main() {}'
+          rustc --target $env:TARGET --crate-name arm64_toolchain $source -o $binary
+          # Link only: an ARM64 executable cannot run on this x64 runner.
+          Get-Item $binary | Select-Object Name, Length
       - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           # No compiled target/bundle cache: never collect stale installers.

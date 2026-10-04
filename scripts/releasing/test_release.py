@@ -1,11 +1,13 @@
 """Release correctness boundaries; no network, app data, or app compilation."""
 
 import copy
+import struct
 import tempfile
 import unittest
 from pathlib import Path
 
 import release
+from verify_bundle import pe_machine
 
 SHA = "a" * 40
 OTHER = "b" * 40
@@ -47,6 +49,19 @@ def artifacts(root, version=VERSION, sha=SHA):
             path = directory / name
             path.write_bytes(f"fixture installer: {name}".encode())
             records.append(release.file_record(path))
+        payload = {}
+        if platform in release.WINDOWS_MACHINES:
+            payload["windows_payload"] = {
+                "installer": records[0],
+                "executable": {
+                    "name": "lumagate.exe",
+                    "size": 128,
+                    "sha256": "c" * 64,
+                    "machine": release.WINDOWS_MACHINES[platform],
+                    "version": version,
+                    "product": "LumaGate",
+                },
+            }
         release.write_json(
             directory / "build.json",
             {
@@ -55,6 +70,7 @@ def artifacts(root, version=VERSION, sha=SHA):
                 "version": version,
                 "sha": sha,
                 "assets": records,
+                **payload,
             },
         )
     return source
@@ -209,14 +225,21 @@ class AssetsAndPublication(unittest.TestCase):
 
     def test_complete_inventory_and_checksum_corruption(self):
         records = self.assemble()
-        self.assertEqual(len(records), 7)
+        self.assertEqual(
+            {record["name"] for record in records},
+            set().union(*(release.names(VERSION, p) for p in release.PLATFORMS))
+            | {"BUILD-INFO.json", "SHA256SUMS"},
+        )
+        self.assertIn(
+            f"LumaGate-{VERSION}-windows-arm64.exe", {r["name"] for r in records}
+        )
         path = self.output / f"LumaGate-{VERSION}-linux-x64.deb"
         path.write_bytes(b"corrupted")
         with self.assertRaises(ValueError):
             release.validate_assets(self.output, VERSION, SHA)
 
     def test_missing_platform_blocks_all_publication(self):
-        release.shutil.rmtree(self.source / "installers-windows-x64")
+        release.shutil.rmtree(self.source / "installers-windows-arm64")
         with self.assertRaises(ValueError):
             self.assemble()
         self.assertFalse(self.output.exists())
@@ -248,7 +271,10 @@ class AssetsAndPublication(unittest.TestCase):
         self.assertFalse(self.api.releases[0]["draft"])
         self.assertFalse(self.api.releases[0]["prerelease"])
         self.assertEqual(self.api.latest, release.PREFIX + VERSION)
-        self.assertEqual(len(self.api.assets[self.api.releases[0]["id"]]), 7)
+        self.assertEqual(
+            {a["name"] for a in self.api.assets[self.api.releases[0]["id"]]},
+            {p.name for p in self.output.iterdir()},
+        )
 
     def test_public_retry_does_not_write_or_replace_assets(self):
         self.assemble()
@@ -284,6 +310,65 @@ class AssetsAndPublication(unittest.TestCase):
             (directory / f"LumaGate_{VERSION}_{suffix}.exe").write_bytes(b"fixture")
         with self.assertRaises(ValueError):
             release.stage(root, VERSION, SHA, "windows-x64", self.root / "staged")
+
+    def test_arm64_receipt_rejects_rebranded_x64_and_changed_installer(self):
+        path = self.source / "installers-windows-arm64/build.json"
+        original = release.read_json(path)
+        for field, value in [("machine", 0x8664), ("version", "9.0.0")]:
+            build = copy.deepcopy(original)
+            build["windows_payload"]["executable"][field] = value
+            release.write_json(path, build)
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                self.assemble()
+        build = copy.deepcopy(original)
+        build["windows_payload"]["installer"]["sha256"] = "0" * 64
+        release.write_json(path, build)
+        with self.assertRaises(ValueError):
+            self.assemble()
+
+    def test_historical_inventory_verifies_without_rewriting_assets(self):
+        self.assemble()
+        info_path = self.output / "BUILD-INFO.json"
+        info = release.read_json(info_path)
+        del info["schema"]
+        info["platforms"] = [
+            p for p in info["platforms"] if p["platform"] != "windows-arm64"
+        ]
+        for build in info["platforms"]:
+            build.pop("windows_payload", None)
+        release.write_json(info_path, info)
+        (self.output / f"LumaGate-{VERSION}-windows-arm64.exe").unlink()
+        records = [
+            release.file_record(p)
+            for p in sorted(self.output.iterdir())
+            if p.name != "SHA256SUMS"
+        ]
+        (self.output / "SHA256SUMS").write_text(
+            "".join(f"{r['sha256']}  {r['name']}\n" for r in records)
+        )
+        before = {p.name: p.read_bytes() for p in self.output.iterdir()}
+        release.validate_assets(self.output, VERSION, SHA)
+        self.assertEqual(
+            before, {p.name: p.read_bytes() for p in self.output.iterdir()}
+        )
+        with self.assertRaises(ValueError):
+            release.inventory_platforms(info, "3.24.3")
+
+
+class WindowsPE(unittest.TestCase):
+    def test_reads_payload_machine_not_filename(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "LumaGate-windows-arm64.exe"
+            header = bytearray(134)
+            header[:2] = b"MZ"
+            struct.pack_into("<I", header, 0x3C, 128)
+            for machine in (0xAA64, 0x8664, 0x14C):
+                header[128:] = b"PE\0\0" + struct.pack("<H", machine)
+                path.write_bytes(header)
+                self.assertEqual(pe_machine(path), machine)
+            path.write_bytes(header[:65])
+            with self.assertRaises(ValueError):
+                pe_machine(path)
 
 
 if __name__ == "__main__":

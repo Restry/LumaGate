@@ -6,9 +6,19 @@ import json
 import os
 import plistlib
 import struct
+import tempfile
 from pathlib import Path
 
-from release import PLATFORMS, manifests, require, run, semver
+from release import (
+    PLATFORMS,
+    WINDOWS_MACHINES,
+    file_record,
+    manifests,
+    require,
+    run,
+    semver,
+    write_json,
+)
 
 
 def one(directory, pattern):
@@ -17,6 +27,62 @@ def one(directory, pattern):
         len(paths) == 1, f"Expected one {pattern} under {directory}, found {len(paths)}"
     )
     return paths[0]
+
+
+def pe_machine(executable):
+    with executable.open("rb") as stream:
+        require(stream.read(2) == b"MZ", "Not a Windows executable")
+        stream.seek(0x3C)
+        offset = stream.read(4)
+        require(len(offset) == 4, "Truncated DOS header")
+        stream.seek(struct.unpack("<I", offset)[0])
+        header = stream.read(6)
+    require(len(header) == 6 and header[:4] == b"PE\0\0", "Invalid PE header")
+    return struct.unpack("<H", header[4:])[0]
+
+
+def windows_payload(installer, executable, platform, version):
+    # NSIS's bootstrap PE may be x86 even when the installed app is ARM64.
+    # Extract without executing either installer or app; verify the actual payload.
+    with tempfile.TemporaryDirectory(prefix="lumagate-nsis-") as tmp:
+        run("7z", "x", "-y", f"-o{tmp}", str(installer.resolve()))
+        packaged = one(Path(tmp), f"**/{executable.name}")
+        machine = pe_machine(packaged)
+        require(
+            machine == WINDOWS_MACHINES[platform],
+            "Windows payload architecture mismatch",
+        )
+        record = file_record(packaged)
+        require(
+            record == file_record(executable),
+            "NSIS payload differs from built executable",
+        )
+        os.environ["LUMAGATE_VERIFY_EXE"] = str(packaged.resolve())
+        info = json.loads(
+            run(
+                "powershell",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "(Get-Item -LiteralPath $env:LUMAGATE_VERIFY_EXE).VersionInfo | "
+                "Select-Object ProductVersion,ProductName | ConvertTo-Json -Compress",
+            )
+        )
+        require(
+            info["ProductVersion"] == version and info["ProductName"] == "LumaGate",
+            "Windows packaged executable version/product mismatch",
+        )
+    receipt = {
+        "installer": file_record(installer),
+        "executable": {
+            **record,
+            "machine": machine,
+            "version": version,
+            "product": "LumaGate",
+        },
+    }
+    print(f"Verified NSIS payload: {json.dumps(receipt, sort_keys=True)}")
+    return receipt
 
 
 def verify(root, platform, version):
@@ -43,29 +109,13 @@ def verify(root, platform, version):
         # This is structural signature verification, NOT Gatekeeper/notarization approval.
         dmg = one(directory / "bundle/dmg", "*.dmg")
         run("hdiutil", "verify", str(dmg))
-    elif platform == "windows-x64":
+    elif platform in WINDOWS_MACHINES:
         executable = one(directory, "*.exe")
-        with executable.open("rb") as stream:
-            require(stream.read(2) == b"MZ", "Not a Windows executable")
-            stream.seek(0x3C)
-            stream.seek(struct.unpack("<I", stream.read(4))[0])
-            require(stream.read(6) == b"PE\0\0\x64\x86", "Windows app is not x64 PE")
-        os.environ["LUMAGATE_VERIFY_EXE"] = str(executable.resolve())
-        info = json.loads(
-            run(
-                "powershell",
-                "-NoProfile",
-                "-NonInteractive",
-                "-Command",
-                "(Get-Item -LiteralPath $env:LUMAGATE_VERIFY_EXE).VersionInfo | "
-                "Select-Object ProductVersion,ProductName | ConvertTo-Json -Compress",
-            )
+        installer = one(directory / "bundle/nsis", "*.exe")
+        write_json(
+            directory / "windows-payload.json",
+            windows_payload(installer, executable, platform, version),
         )
-        require(
-            info["ProductVersion"] == version and info["ProductName"] == "LumaGate",
-            "Windows executable version/product mismatch",
-        )
-        one(directory / "bundle/nsis", "*.exe")
     else:
         deb = one(directory / "bundle/deb", "*.deb")
         require(
