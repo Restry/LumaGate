@@ -15,13 +15,8 @@ concurrency:
   queue: max
 
 jobs:
-  gates:
-    if: github.repository == 'Restry/LumaGate' && github.ref == 'refs/heads/release'
-    uses: ./.github/workflows/ci.yml
-
   reserve:
     name: Reserve immutable version for source
-    needs: gates
     if: github.repository == 'Restry/LumaGate' && github.ref == 'refs/heads/release'
     runs-on: ubuntu-22.04
     timeout-minutes: 10

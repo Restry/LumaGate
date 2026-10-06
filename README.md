@@ -63,7 +63,7 @@ macOS 若系统 Xcode 未就绪，可在命令上设置 `DEVELOPER_DIR=/Library/
 
 ## 开发分支与正式发布
 
-仓库仅保留 `dev` 与 `release` 两个分支，`dev` 是默认开发分支。维护者将完成的提交正常快进或合并到 `release`；发布流程自行运行轻量检查，不等待 dev 重复构建。推送后由 GitHub Actions 自动构建并发布，不手工覆盖版本标签或已公开资产。
+仓库仅保留 `dev` 与 `release` 两个分支，`dev` 是默认开发分支。合并前在本地完成检查与测试；推送 `dev` 和提交 PR 不运行自动 CI。维护者将完成的提交正常快进或合并到 `release`；GitHub Actions 仅负责正式发布构建、产物校验与发布，不手工覆盖版本标签或已公开资产。
 
 首个版本基础为 `3.24.0`，四处版本清单必须一致。后续同一 minor 的新提交自动分配递增 patch；同一源码 SHA 重跑复用版本。正式资产包含 macOS arm64/x64 DMG、Windows x64 NSIS、Linux x64 AppImage/deb、`BUILD-INFO.json` 与 `SHA256SUMS`。下载只认仓库 [Releases](https://github.com/Restry/LumaGate/releases)，不把 Actions 临时产物当正式发行。
 

@@ -2,10 +2,10 @@
 
 ## 日常开发与下载
 
-- `dev` 是日常开发分支和仓库默认分支。推送 `dev`、向 `dev`/`release` 提交 PR 会运行 `LumaGate CI`，不会发布。
-- CI 只运行 TypeScript 检查、当前 gateway UI 的 `pnpm test:manual`、四处版本与发布工具契约测试。不在 dev 编译安装包，也不运行完整上游 cargo test、clippy 或 rustfmt 门禁；renderer 与 Rust 的真实编译由 release 的 Tauri 构建完成。已有手动 Rust 模块验证可复用，修改相关逻辑时按需本地运行 `--lib manual::`，不在每个平台重复编译测试套件。
+- `dev` 是日常开发分支和仓库默认分支。推送 `dev`、向 `dev`/`release` 提交 PR 不运行自动 CI，也不会发布。
+- 合并前在本地运行 TypeScript 检查、当前 gateway UI 的 `pnpm test:manual`、四处版本与发布工具契约测试；命令见 CONTRIBUTING.md 及下方本地验证章节。GitHub Actions 仅负责正式发布构建、产物校验与发布，不再单独运行测试门禁。renderer 与 Rust 的真实编译由 release 的 Tauri 构建完成，保留原生 `beforeBuildCommand`。修改 Rust 手动网关逻辑时按需本地运行 `--lib manual::`。
 - 将已完成变更从 `dev` 合入 `release` 并推送，触发 `LumaGate Release`。不需要手动打标签。
-- 发布流程在同一个 workflow 中依次完成门禁、版本保留、五个目标构建任务、完整性校验、草稿上传、正式发布。不会依赖 `GITHUB_TOKEN` 创建标签后触发另一条 workflow。
+- 发布流程在同一个 workflow 中依次完成版本保留、五个目标构建任务、完整性校验、草稿上传、正式发布。不会依赖 `GITHUB_TOKEN` 创建标签后触发另一条 workflow。
 - 用户最终从 <https://github.com/Restry/LumaGate/releases> 下载。Actions artifacts 仅用于任务交接，保留 14 天，不是最终下载地址。
 
 ## 版本与源码关系
@@ -17,7 +17,7 @@
 1. 首次发布使用经过校验的基础版本；LumaGate 首发集成的四处基础版本为 `3.24.0`。
 2. 同一 major/minor 系列后续新 SHA：取基础版本与已有保留版本下一 patch 的较大值。按数字比较，不按字符串比较。
 3. 显式 minor/major 发布：在 `dev` 将四处基础版本同步到新的 `X.Y.0` 或 `X.0.0`，提交并合入 `release`。只写 conventional commit 的 `feat!:` 不会自动改版本。不要将基础版本回退到已经发布过的更低 major/minor。
-4. 门禁成功后，用 annotated tag 保留版本，标签直接指向触发事件的完整源 SHA，annotation 记录版本与 SHA。标签不是 Release。构建失败会留下保留标签，可能出现版本空号；不得删标签回收版本。
+4. 发布条件与基础版本校验通过后，用 annotated tag 保留版本，标签直接指向触发事件的完整源 SHA，annotation 记录版本与 SHA。标签不是 Release。构建失败会留下保留标签，可能出现版本空号；不得删标签回收版本。
 5. 同一 SHA 的重跑/手动重试复用原版本和原标签，包括较旧失败运行的重跑。成功发布后不重新构建、不覆盖资产，而是下载原始发布资产核对 SHA、版本、清单和校验和。
 6. 仅在 GitHub runner 的构建 checkout 修改上述四处版本；不提交 bump commit，不修改依赖版本，不形成 CI 循环。Rust `CARGO_PKG_VERSION` 与 Tauri runtime/安装器版本因此一致。`BUILD-INFO.json` 将版本映射回精确源码 SHA、目标架构及各平台文件摘要。源码标签中的 manifest 仍是基础版本；复现时须先执行 `stamp`。
 7. 为兼容 Windows installer，major/minor 最大 255、patch 最大 65535；到界限必须显式升 minor/major，不能自动溢出。
@@ -57,7 +57,7 @@ gh run rerun RUN_ID --repo Restry/LumaGate --failed
 gh run watch RUN_ID --repo Restry/LumaGate --exit-status
 ```
 
-- 门禁失败：尚未保留版本，无 Release。
+- 发布条件或基础版本校验失败：尚未保留版本，无 Release。
 - 矩阵失败：保留标签仍在，成功的平台 artifact 可供同一运行的 failed-jobs 重跑使用；不生成 Release。
 - 上传中断：仅留下不可公开下载的草稿，不更新 Latest。下次发布会验证草稿的 tag/SHA 归属，删除该未发布草稿并重新上传完整资产；永远不删除标签、公共 Release 或公共资产。
 - 上传失败后的草稿无需手动清理；保留可供诊断。若中断恰好发生于公开成功后，重跑读取公共发布状态，不盲目删除。网络/API 错误不伪装成“没找到”。
@@ -88,7 +88,7 @@ gh repo edit Restry/LumaGate --default-branch dev
 git push origin dev:release
 ```
 
-不需要等待 dev CI 完成：release 会独立执行同一组轻量检查。不要强推或回退 release。可设置防删除/防强推保护，但不要求单人仓库额外审批或未经确认的必需 status checks。
+检查和测试须在合并前本地完成；dev/PR 不运行自动 CI，release 不再调用可复用 CI 门禁。不要强推或回退 release。可设置防删除/防强推保护，但不要求单人仓库额外审批或未经确认的必需 status checks。
 
 如 SSH push 因 workflow scope 被拒，由维护者使用 `gh auth refresh --hostname github.com --scopes workflow` 完成官方授权流程；不复制 token 到 Git remote、命令日志或全局环境文件。
 
@@ -105,9 +105,9 @@ python3.13 scripts/releasing/release.py verify --version VERSION --sha SOURCE_SH
 
 annotated tag 的 ref 指向 tag object，继续 GET `/git/tags/OBJECT_SHA` 核对 `object.sha == SOURCE_SHA`。清单要求的资产必须全部下载并校验。Windows ARM64 安装器还需使用 `7z x`（macOS 可用 `7zz x`）解包，将其中主程序的 PE Machine `0xAA64`、大小、SHA-256 与 BUILD-INFO 回执核对，不能只检查安装器外壳。在 Mac 可使用 `hdiutil imageinfo` 和 `hdiutil verify` 检查 DMG，无需安装或替换运行中的应用。未在对应系统安装时，不声称 Windows/Linux 安装或运行已经验证。
 
-默认 token 权限为 read。仅 reserve（创建 annotated tag/ref）和 publish（草稿及资产）job 请求 `contents: write`；编译、依赖安装及 PR 检查不写仓库。无 `secrets: inherit` 或 `pull_request_target`，checkout 不持久化凭据。缓存仅保存依赖下载，不含 target、安装器或本机状态。任何必需构建失败均阻止发布，不忽略失败、不上传模拟文件。
+默认 token 权限为 read。仅 reserve（创建 annotated tag/ref）和 publish（草稿及资产）job 请求 `contents: write`；编译与依赖安装不写仓库。无 `secrets: inherit` 或 `pull_request_target`，checkout 不持久化凭据。缓存仅保存依赖下载，不含 target、安装器或本机状态。任何必需构建失败均阻止发布，不忽略失败、不上传模拟文件。
 
-Node 版本沿用 `.node-version`。当前 Node 22.12.0 自带 Corepack 0.29.4，其旧 npm 公钥会使 pnpm 10.12.3 下载报 `Cannot find matching keyid`；CI 在两个构建入口先安装固定 `corepack@0.34.6`，再按 `packageManager` 执行 `corepack install`。此组合已在隔离目录实测，不禁用 Corepack integrity checks。
+Node 版本沿用 `.node-version`。当前 Node 22.12.0 自带 Corepack 0.29.4，其旧 npm 公钥会使 pnpm 10.12.3 下载报 `Cannot find matching keyid`；发布流程在 Windows/Unix 构建入口先安装固定 `corepack@0.34.6`，再按 `packageManager` 执行 `corepack install`。此组合已在隔离目录实测，不禁用 Corepack integrity checks。
 
 Windows hosted runner 的 Node 自带 Corepack 与 npm 全局 prefix 不同，单纯升级全局包仍可能解析到旧 shim。Windows 在 runner 临时目录安装固定 Corepack，以绝对 JS 路径启用和下载 pnpm，并将同一目录置于 PATH 首位；进入构建前打印路径并验证 Corepack 0.34.6 / pnpm 10.12.3。不禁用包签名检查、不依赖预装 Yarn、不改动开发者本机 npm 配置。
 
@@ -118,7 +118,7 @@ Windows hosted runner 的 Node 自带 Corepack 与 npm 全局 prefix 不同，�
 ```bash
 python3.13 scripts/releasing/release.py check
 python3.13 -m unittest discover -s scripts/releasing -p 'test_*.py' -v
-actionlint .github/workflows/ci.yml .github/workflows/release.yml
+actionlint .github/workflows/release.yml
 ```
 
 注意：actionlint 1.7.12 尚不认识官方已支持的 `concurrency.queue`。该版本直接检查 release.yml 会报告这一处兼容性错误；不要因此删掉 `queue: max`。可另用 `-ignore 'unexpected key "queue" for "concurrency" section'` 检查其余语法，再单独按官方文档校验固定 group、`queue: max` 与 `cancel-in-progress: false`；这不等于声称未经筛选的 actionlint 全通过。
