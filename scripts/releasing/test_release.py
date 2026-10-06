@@ -379,7 +379,7 @@ class AssetsAndPublication(unittest.TestCase):
         with self.assertRaises(ValueError):
             release.inventory_platforms(info, "3.24.3")
 
-    def test_signature_rejects_tamper_even_with_recomputed_checksums(self):
+    def test_signature_rejects_tampered_payload(self):
         self.assemble()
         asset = self.output / f"LumaGate-{VERSION}-windows-arm64.exe"
         signature = Path(str(asset) + ".sig").read_text()

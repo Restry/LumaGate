@@ -197,6 +197,7 @@ async fn check(app: &tauri::AppHandle, manual: bool) -> Result<View, String> {
     }
     updates.change(app, |s| {
         s.view.phase = Phase::Checking;
+        s.view.checked_at = Some(chrono::Utc::now().to_rfc3339());
         s.view.message = "正在检查 GitHub 正式版本…".into();
     });
     let result = async {
@@ -265,7 +266,6 @@ async fn check(app: &tauri::AppHandle, manual: bool) -> Result<View, String> {
                 if !same {
                     s.bytes = None;
                 }
-                s.view.checked_at = Some(chrono::Utc::now().to_rfc3339());
                 s.view.version = update.as_ref().map(|u| u.version.clone());
                 s.view.notes = update
                     .as_ref()
@@ -326,14 +326,25 @@ async fn resume(state: &ManualState, version: &str) -> Result<(), String> {
     }
     Ok(())
 }
-pub async fn startup(app: tauri::AppHandle) {
-    let recovered = resume(&app.state::<ManualState>(), env!("CARGO_PKG_VERSION")).await;
+pub fn restore_before_show(app: &tauri::AppHandle) -> bool {
+    let recovered = tauri::async_runtime::block_on(resume(
+        &app.state::<ManualState>(),
+        env!("CARGO_PKG_VERSION"),
+    ));
     if let Err(error) = recovered {
-        app.state::<Updates>().fail(&app, error);
-        tokio::time::sleep(PERIOD).await;
+        app.state::<Updates>().fail(app, error);
+        true
     } else {
-        tokio::time::sleep(Duration::from_secs(15)).await;
+        false
     }
+}
+pub async fn startup(app: tauri::AppHandle, recovery_failed: bool) {
+    tokio::time::sleep(if recovery_failed {
+        PERIOD
+    } else {
+        Duration::from_secs(15)
+    })
+    .await;
     loop {
         let _ = check(&app, false).await;
         tokio::time::sleep(PERIOD).await;

@@ -852,9 +852,11 @@ pub fn run() {
             });
             let updates = updater::Updates::new(&app.state::<ManualState>().db)?;
             app.manage(updates);
+            // Restore the one-use update intent before the renderer takes its first snapshot.
+            let recovery_failed = updater::restore_before_show(app.handle());
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                updater::startup(handle).await;
+                updater::startup(handle, recovery_failed).await;
             });
             if let Some(window) = app.get_webview_window("main") {
                 window.show()?;
