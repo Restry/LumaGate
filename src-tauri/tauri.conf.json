@@ -1,46 +1,38 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "LumaGate",
-  "version": "3.24.4",
-  "identifier": "cn.restry.lumagate",
-  "build": {
-    "frontendDist": "../dist",
-    "devUrl": "http://localhost:3000",
-    "beforeDevCommand": "pnpm run dev:renderer",
-    "beforeBuildCommand": "pnpm run build:renderer"
-  },
   "app": {
-    "windows": [
-      {
-        "label": "main",
-        "title": "枢光 · LumaGate",
-        "titleBarStyle": "Overlay",
-        "width": 1200,
-        "height": 800,
-        "minWidth": 900,
-        "minHeight": 600,
-        "visible": false,
-        "resizable": true,
-        "fullscreen": false,
-        "center": true
-      }
-    ],
     "security": {
-      "csp": "default-src 'self'; img-src 'self' data: https: http:; script-src 'self' 'sha256-ls27Lc1OytcVawXPVMplz6LyKz2i9KYAVBw3u79qyB4='; style-src 'self' 'unsafe-inline'; connect-src 'self' ipc: http://ipc.localhost https: http:",
       "assetProtocol": {
         "enable": true,
         "scope": []
+      },
+      "csp": "default-src 'self'; img-src 'self' data: https: http:; script-src 'self' 'sha256-ls27Lc1OytcVawXPVMplz6LyKz2i9KYAVBw3u79qyB4='; style-src 'self' 'unsafe-inline'; connect-src 'self' ipc: http://ipc.localhost https: http:"
+    },
+    "windows": [
+      {
+        "center": true,
+        "fullscreen": false,
+        "height": 800,
+        "label": "main",
+        "minHeight": 600,
+        "minWidth": 900,
+        "resizable": true,
+        "title": "\u67a2\u5149 \u00b7 LumaGate",
+        "titleBarStyle": "Overlay",
+        "visible": false,
+        "width": 1200
       }
-    }
+    ]
+  },
+  "build": {
+    "beforeBuildCommand": "pnpm run build:renderer",
+    "beforeDevCommand": "pnpm run dev:renderer",
+    "devUrl": "http://localhost:3000",
+    "frontendDist": "../dist"
   },
   "bundle": {
     "active": true,
-    "targets": "all",
     "createUpdaterArtifacts": false,
-    "resources": {
-      "../LICENSE": "LICENSE",
-      "../src/manual/assets/GEIST-LICENSE.txt": "GEIST-LICENSE.txt"
-    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -48,14 +40,22 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "macOS": {
+      "minimumSystemVersion": "12.0"
+    },
+    "resources": {
+      "../LICENSE": "LICENSE",
+      "../src/manual/assets/GEIST-LICENSE.txt": "GEIST-LICENSE.txt"
+    },
+    "targets": "all",
     "windows": {
       "wix": {
         "template": "wix/per-user-main.wxs"
       }
-    },
-    "macOS": {
-      "minimumSystemVersion": "12.0"
     }
   },
-  "plugins": {}
+  "identifier": "cn.restry.lumagate",
+  "plugins": {},
+  "productName": "LumaGate",
+  "version": "3.24.5"
 }

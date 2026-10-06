@@ -162,6 +162,7 @@ pub struct RequestForwarder {
     current_providers: Arc<RwLock<std::collections::HashMap<String, (String, String)>>>,
     gemini_shadow: Arc<GeminiShadowStore>,
     codex_chat_history: Arc<CodexChatHistoryStore>,
+    native_responses_identity: Arc<super::providers::native_responses_identity::IdentityStore>,
     /// 故障转移切换管理器
     failover_manager: Arc<FailoverSwitchManager>,
     /// AppHandle，用于发射事件和更新托盘
@@ -244,6 +245,7 @@ impl RequestForwarder {
         current_providers: Arc<RwLock<std::collections::HashMap<String, (String, String)>>>,
         gemini_shadow: Arc<GeminiShadowStore>,
         codex_chat_history: Arc<CodexChatHistoryStore>,
+        native_responses_identity: Arc<super::providers::native_responses_identity::IdentityStore>,
         failover_manager: Arc<FailoverSwitchManager>,
         app_handle: Option<tauri::AppHandle>,
         current_provider_id_at_start: String,
@@ -265,6 +267,7 @@ impl RequestForwarder {
             current_providers,
             gemini_shadow,
             codex_chat_history,
+            native_responses_identity,
             failover_manager,
             app_handle,
             current_provider_id_at_start,
@@ -443,6 +446,16 @@ impl RequestForwarder {
         // Err 路径：guard 在函数 scope 内随返回值落地时自动 drop。
         result.map(|mut fr| {
             fr.response = crate::manual::token_usage::observe(fr.response, &fr.provider);
+            if super::providers::native_responses_identity::enabled(&fr.provider, endpoint) {
+                fr.response = super::providers::native_responses_identity::wrap(
+                    fr.response,
+                    self.native_responses_identity.clone(),
+                    super::providers::native_responses_identity::scope(
+                        &fr.provider,
+                        &self.session_id,
+                    ),
+                );
+            }
             fr.connection_guard = Some(guard);
             fr
         })
@@ -1683,6 +1696,15 @@ impl RequestForwarder {
         } else {
             mapped_body
         };
+
+        if super::providers::native_responses_identity::request_enabled(provider, endpoint) {
+            self.native_responses_identity
+                .restore_request(
+                    &super::providers::native_responses_identity::scope(provider, &self.session_id),
+                    &mut request_body,
+                )
+                .map_err(|e| ProxyError::DatabaseError(format!("Responses identity cache: {e}")))?;
+        }
 
         // Native Responses passthrough to a strict third-party gateway (xAI).
         // One gate so rebase conflicts stay here plus the isolate file, not
@@ -3983,6 +4005,9 @@ mod tests {
             current_providers: Arc::new(RwLock::new(HashMap::new())),
             gemini_shadow: Arc::new(GeminiShadowStore::new()),
             codex_chat_history: Arc::new(CodexChatHistoryStore::default()),
+            native_responses_identity: Arc::new(
+                crate::proxy::providers::native_responses_identity::IdentityStore::new(db.clone()),
+            ),
             failover_manager: Arc::new(FailoverSwitchManager::new(db)),
             app_handle: None,
             current_provider_id_at_start: String::new(),
@@ -4237,6 +4262,76 @@ mod tests {
                 .and_then(|value| value.to_str().ok()),
             Some("copilot")
         );
+    }
+
+    #[tokio::test]
+    async fn native_responses_identity_runs_on_real_http_forwarding_and_continuation() {
+        use axum::{routing::post, Json, Router};
+        let received = Arc::new(tokio::sync::Mutex::new(Vec::<Value>::new()));
+        let calls = received.clone();
+        let app = Router::new().route("/v1/responses", post(move |Json(body): Json<Value>| {
+            let calls = calls.clone();
+            async move {
+                calls.lock().await.push(body);
+                let events = [
+                    json!({"type":"response.created","response":{"id":"r-start","output":[]}}),
+                    json!({"type":"response.output_item.added","output_index":0,"item":{"id":"m-start","type":"message","role":"assistant","content":[]}}),
+                    json!({"type":"response.output_text.delta","output_index":0,"item_id":"m-delta","delta":"hello"}),
+                    json!({"type":"response.output_item.done","output_index":0,"item":{"id":"m-done","type":"message","role":"assistant","content":[{"type":"output_text","text":"hello"}]}}),
+                    json!({"type":"response.completed","response":{"id":"r-final","status":"completed","output":[{"id":"m-final","type":"message","role":"assistant","content":[{"type":"output_text","text":"hello"}]}]}}),
+                ];
+                let wire = events.iter().map(|e| format!("data: {e}\n\n")).collect::<String>();
+                ([("content-type", "text/event-stream")], wire)
+            }
+        }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}/v1", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let mut provider = test_provider_with_type(None);
+        provider.settings_config = json!({
+            "base_url":base,"api_format":"openai_responses","auth":{"OPENAI_API_KEY":"fixture"},
+            "manual_upstream_model":"fixture-model","manual_credential_version":"fixture-account",
+            "manual_native_responses_identity":true,
+            "config":format!("model_provider = \"fixture\"\n[model_providers.fixture]\nbase_url = \"{base}\"\nwire_api = \"responses\"\n")
+        });
+        let forwarder = test_forwarder(Duration::from_secs(5), Duration::from_secs(5));
+        for body in [
+            json!({"model":"fixture-model","input":"hello","stream":true}),
+            json!({"model":"fixture-model","stream":true,"previous_response_id":"r-start","input":[{"id":"m-start","type":"item_reference"}]}),
+        ] {
+            let result = forwarder
+                .forward_with_retry(
+                    &AppType::Codex,
+                    http::Method::POST,
+                    "/v1/responses",
+                    body,
+                    HeaderMap::new(),
+                    Extensions::new(),
+                    vec![provider.clone()],
+                )
+                .await
+                .unwrap_or_else(|e| panic!("{}", e.error));
+            let raw = result
+                .response
+                .bytes_with_limit(MAX_RESPONSE_BODY_BYTES)
+                .await
+                .unwrap();
+            let output: Vec<Value> = std::str::from_utf8(&raw)
+                .unwrap()
+                .lines()
+                .filter_map(|l| l.strip_prefix("data: "))
+                .map(|s| serde_json::from_str(s).unwrap())
+                .collect();
+            assert_eq!(output[2]["item_id"], "m-start");
+            assert_eq!(output[3]["item"]["id"], "m-start");
+            assert_eq!(output[4]["response"]["id"], "r-start");
+            assert_eq!(output[4]["response"]["output"][0]["id"], "m-start");
+        }
+        let calls = received.lock().await;
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[1]["previous_response_id"], "r-final");
+        assert_eq!(calls[1]["input"][0]["id"], "m-final");
+        server.abort();
     }
 
     #[tokio::test]

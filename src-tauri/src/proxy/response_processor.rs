@@ -1028,6 +1028,9 @@ mod tests {
 
     fn build_state(db: Arc<Database>) -> ProxyState {
         ProxyState {
+            native_responses_identity: Arc::new(
+                crate::proxy::providers::native_responses_identity::IdentityStore::new(db.clone()),
+            ),
             db: db.clone(),
             config: Arc::new(RwLock::new(ProxyConfig::default())),
             status: Arc::new(RwLock::new(ProxyStatus::default())),

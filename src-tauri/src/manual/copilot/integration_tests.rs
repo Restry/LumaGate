@@ -422,6 +422,11 @@ async fn bare_model_names_reach_the_real_router_without_login_or_network_calls()
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].id, PROVIDER_ID);
         assert_eq!(
+            candidates[0].settings_config
+                [crate::proxy::providers::native_responses_identity::ENABLED],
+            true
+        );
+        assert_eq!(
             candidates[0].settings_config["manual_upstream_model"],
             "gpt-5.4"
         );

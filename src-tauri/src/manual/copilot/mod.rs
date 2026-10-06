@@ -454,6 +454,9 @@ impl Manager {
         upstream.settings_config["manual_credential_version"] =
             json!(super::catalog::deployment_version(source, model));
         upstream.settings_config["manual_copilot_token"] = json!(token);
+        upstream.settings_config[crate::proxy::providers::native_responses_identity::ENABLED] = json!(
+            matches!(model.protocol_override, Some(Protocol::OpenaiResponses))
+        );
         upstream.settings_config["manual_upstream_model"] = json!(upstream_id(model)?);
         Ok(upstream)
     }

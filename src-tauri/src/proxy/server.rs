@@ -44,6 +44,8 @@ pub struct ProxyState {
     pub gemini_shadow: Arc<GeminiShadowStore>,
     /// Codex Chat bridge history，用于恢复 previous_response_id 指向的 tool call
     pub codex_chat_history: Arc<CodexChatHistoryStore>,
+    pub(crate) native_responses_identity:
+        Arc<super::providers::native_responses_identity::IdentityStore>,
     /// AppHandle，用于发射事件和更新托盘菜单
     pub app_handle: Option<tauri::AppHandle>,
     /// 故障转移切换管理器
@@ -72,6 +74,9 @@ impl ProxyServer {
         let failover_manager = Arc::new(FailoverSwitchManager::new(db.clone()));
 
         let state = ProxyState {
+            native_responses_identity: Arc::new(
+                super::providers::native_responses_identity::IdentityStore::new(db.clone()),
+            ),
             db,
             config: Arc::new(RwLock::new(config.clone())),
             status: Arc::new(RwLock::new(ProxyStatus::default())),
