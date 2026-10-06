@@ -381,3 +381,57 @@ fn stale_failure_projection_rebuild_preserves_raw_completed_record() {
         1
     );
 }
+
+#[test]
+fn default_cost_uses_recorded_response_model_and_entire_filtered_range() {
+    let temp = tempfile::tempdir().unwrap();
+    let logs = RequestLogs::open(temp.path()).unwrap();
+    for _ in 0..35 {
+        let mut row = entry(20, "requested-alias");
+        row.usage.as_mut().unwrap().cache_write_tokens = Some(0);
+        let usage = row.usage.clone();
+        let id = logs.push(row);
+        logs.finish(id, json!({"model":"gpt-6-astra"}), "已结束", usage);
+    }
+    save(&logs, entry(21, "FW-Kimi-K3"));
+    let result = logs
+        .query_history(&Query {
+            model: "requested-alias".into(),
+            page_size: 25,
+            ..Query::default()
+        })
+        .unwrap();
+    // Per request: (100-80)*10 + 80*1 + 20*50, divided by one million.
+    assert_eq!(result["cost"]["totals"]["USD"], "0.0448");
+    assert_eq!(result["cost"]["covered"], 35);
+    let unknown = logs
+        .query_history(&Query {
+            model: "FW-Kimi-K3".into(),
+            ..Query::default()
+        })
+        .unwrap();
+    assert_eq!(unknown["cost"]["covered"], 0);
+    assert_eq!(unknown["cost"]["excluded"], 1);
+    assert_eq!(unknown["cost"]["totals"], json!({}));
+}
+
+#[test]
+fn default_cost_uses_final_route_on_failure_and_excludes_unforwarded_checks() {
+    let temp = tempfile::tempdir().unwrap();
+    let logs = RequestLogs::open(temp.path()).unwrap();
+    let mut failed = entry(20, "gpt-6-astra");
+    failed.effective_model = Some("gpt-4o-mini".into());
+    failed.status = 500;
+    save(&logs, failed);
+    let mut directory = entry(20, "gpt-6-astra");
+    directory.endpoint = "/v1/models".into();
+    save(&logs, directory);
+    let mut rejected = entry(20, "gpt-6-astra");
+    rejected.providers.clear();
+    save(&logs, rejected);
+    let cost = logs.query_history(&Query::default()).unwrap()["cost"].clone();
+    // 20 fresh * .15 + 80 cached * .075 + 20 output * .60, per million.
+    assert_eq!(cost["totals"]["USD"], "0.000021");
+    assert_eq!(cost["covered"], 1);
+    assert_eq!(cost["excluded"], 0);
+}

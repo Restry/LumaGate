@@ -646,3 +646,51 @@ async fn manual_discovery_reads_pages_without_inference() {
     assert_eq!(models[1].context_window, Some(32000));
     task.abort();
 }
+
+#[tokio::test]
+async fn fallback_log_records_served_model_not_requested_alias() {
+    let (a, first, task_a) = mock_upstream().await;
+    let (b, _, task_b) = mock_upstream().await;
+    first.status.store(429, Ordering::SeqCst);
+    let mut second = source("b", &b);
+    second.models[0].id = "model-b".into();
+    let mut doc = Document {
+        providers: vec![source("a", &a), second],
+        ..Document::default()
+    };
+    let groups = doc.groups();
+    let root = groups
+        .iter()
+        .find(|g| g.model.id == "model-a")
+        .unwrap()
+        .id
+        .clone();
+    let target = groups
+        .iter()
+        .find(|g| g.model.id == "model-b")
+        .unwrap()
+        .id
+        .clone();
+    doc.policies.insert(
+        root.clone(),
+        catalog::Policy {
+            balance: catalog::Balance::Priority,
+            failover: true,
+            fallbacks: vec![target],
+        },
+    );
+    let (server, base, _) = gateway_document(doc).await;
+    let response = reqwest::Client::new()
+        .post(format!("{base}/v1/chat/completions"))
+        .json(&json!({"model":root,"messages":[{"role":"user","content":"fixture"}]}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.json::<Value>().await.unwrap()["model"], "model-b");
+    let rows = server.manual_request_logs();
+    assert_eq!(rows[0].model.as_deref(), Some("model-a"));
+    assert_eq!(rows[0].effective_model.as_deref(), Some("model-b"));
+    server.stop().await.unwrap();
+    task_a.abort();
+    task_b.abort();
+}

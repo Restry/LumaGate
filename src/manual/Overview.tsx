@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/popover";
 import { ActionButton, Choice } from "./ui";
 import { RollingNumber } from "./RollingNumber";
+import { DefaultCost } from "./DefaultCost";
 import { compactTokens } from "./log-usage";
 import {
   displayHistory,
@@ -237,6 +238,10 @@ export function Overview({ snapshot, onLogs, onProviders }: Props) {
           </p>
         </article>
       </div>
+      <DefaultCost
+        data={result?.cost}
+        onRefresh={() => setRefresh((v) => v + 1)}
+      />
       {result?.overflow && (
         <p className="mc-notice" role="alert">
           累计用量超过精确展示范围。请缩小时间范围；未填入近似值。
@@ -566,7 +571,7 @@ export function Overview({ snapshot, onLogs, onProviders }: Props) {
             </p>
             <p>
               缓存已包含在输入 Token
-              中，不重复相加，不推算费用。来源观测仅归属最终来源，不代表所有回退尝试的成功率。
+              中，不重复相加。费用仅按已获取的默认单价估算。来源观测仅归属最终来源，不代表所有回退尝试的成功率。
             </p>
             <p>
               概览只读刷新；不会自动测试模型、启动网关或修改配置。最近 7

@@ -31,6 +31,7 @@ tokio::task_local! { static TRACE: RefCell<Trace>; }
 #[derive(Default)]
 struct Trace {
     model: Option<String>,
+    effective_model: Option<String>,
     caller: Caller,
     input: Value,
     route_note: Option<String>,
@@ -85,6 +86,7 @@ pub struct RequestLog {
     pub started_at: String,
     pub endpoint: String,
     pub model: Option<String>,
+    pub effective_model: Option<String>,
     pub caller: Caller,
     pub status: u16,
     pub response_ms: u64,
@@ -288,6 +290,20 @@ pub fn attempt(provider: &crate::provider::Provider) {
             return;
         }
         let mut trace = slot.borrow_mut();
+        trace.effective_model = provider.settings_config["manual_upstream_model"]
+            .as_str()
+            .filter(|id| id.len() <= 160 && !id.chars().any(char::is_control))
+            .map(|id| {
+                if provider
+                    .settings_config
+                    .get("manual_copilot_token")
+                    .is_some()
+                {
+                    format!("copilot/{id}")
+                } else {
+                    id.to_owned()
+                }
+            });
         for path in ["/auth/OPENAI_API_KEY", "/env/ANTHROPIC_AUTH_TOKEN"] {
             if let Some(secret) = provider
                 .settings_config
@@ -468,6 +484,7 @@ pub async fn capture(
                     started_at,
                     endpoint,
                     model: trace.model,
+                    effective_model: trace.effective_model,
                     caller: trace.caller,
                     status: response.status().as_u16(),
                     response_ms: started.elapsed().as_millis() as u64,

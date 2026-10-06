@@ -1,5 +1,6 @@
 import type { RequestLog } from "./RequestLogs";
 import type { UsageAnalytics, UsageGrouping } from "./log-usage";
+import type { DefaultCostData } from "./DefaultCost";
 export interface LogStorage {
   ready: boolean;
   path: string;
@@ -29,6 +30,7 @@ export interface HistoryPage {
   anchor: number;
   newerAvailable: boolean;
   overflow: boolean;
+  cost?: DefaultCostData;
   stats: { total: number; success: number; failed: number; pending: number };
   analytics: UsageAnalytics & {
     intervalMs: number;

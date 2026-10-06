@@ -95,6 +95,8 @@ struct Meta {
     eligible: bool,
     phase: String,
     usage: Option<Counts>,
+    #[serde(default)]
+    meter: Option<crate::manual::pricing::Meter>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 struct Counts {
@@ -257,6 +259,20 @@ fn project(id: u64, row: &Value) -> Meta {
     } else {
         "unavailable"
     };
+    // Only explicit recorded final identity; never infer it from a requested alias.
+    let model = row
+        .get("effectiveModel")
+        .and_then(Value::as_str)
+        .or_else(|| response.get("model").and_then(Value::as_str))
+        .filter(|s| !s.is_empty() && s.len() <= 160 && !s.chars().any(char::is_control));
+    let meter = (eligible && !providers.is_empty()).then(|| crate::manual::pricing::Meter {
+        model: model.map(str::to_owned),
+        requested: row.get("model").and_then(Value::as_str).map(str::to_owned),
+        input: usage.as_ref().map(|u| u.input),
+        output: usage.as_ref().map(|u| u.output),
+        read: usage.as_ref().and_then(|u| u.cache),
+        write: count("cacheWriteTokens"),
+    });
     Meta {
         id,
         at: chrono::DateTime::parse_from_rfc3339(&text(row, "startedAt"))
@@ -275,6 +291,7 @@ fn project(id: u64, row: &Value) -> Meta {
         eligible,
         phase: phase.into(),
         usage,
+        meter,
     }
 }
 
@@ -299,13 +316,13 @@ pub(super) fn initialize(conn: &mut Connection) -> rusqlite::Result<()> {
             |r| r.get(0),
         )
         .optional()?;
-    if version != Some(2) {
+    if version != Some(3) {
         tx.execute(
             "INSERT OR IGNORE INTO manual_log_dirty_v1 SELECT id FROM request_logs",
             [],
         )?;
         tx.execute(
-            "INSERT OR REPLACE INTO manual_log_projection_version VALUES(1,2)",
+            "INSERT OR REPLACE INTO manual_log_projection_version VALUES(1,3)",
             [],
         )?;
     }
@@ -486,6 +503,8 @@ fn query_inner(conn: &mut Connection, q: &Query) -> rusqlite::Result<Value> {
     let (mut eligible, mut waiting, mut partial, mut unavailable, mut invalid_times) =
         (0u64, 0u64, 0u64, 0u64, 0u64);
     let mut sum = Sum::default();
+    let (catalog, price_status) = crate::manual::pricing::SERVICE.snapshot();
+    let mut cost = crate::manual::pricing::Estimate::default();
     let (mut cache_count, mut cache_input, mut cache_read) = (0u64, 0u128, 0u128);
     let mut timeline: BTreeMap<i64, Sum> = BTreeMap::new();
     // Outcome trends include every matching request, not just complete token reports.
@@ -502,6 +521,9 @@ fn query_inner(conn: &mut Connection, q: &Query) -> rusqlite::Result<Value> {
             let m: Meta = serde_json::from_str(&row.get::<_, String>(0)?)
                 .map_err(|_| rusqlite::Error::InvalidQuery)?;
             matched += 1;
+            if let Some(meter) = &m.meter {
+                cost.add(&catalog.catalog, meter);
+            }
             match m.outcome.as_str() {
                 "success" => success += 1,
                 "failed" => failed += 1,
@@ -725,6 +747,7 @@ fn query_inner(conn: &mut Connection, q: &Query) -> rusqlite::Result<Value> {
     Ok(
         json!({"rows":data,"matched":matched,"page":page,"pageSize":q.page_size,"pages":pages,"anchor":anchor,"newerAvailable":latest>anchor,
       "stats":{"total":matched,"success":success,"failed":failed,"pending":pending},
+      "cost":cost.value(price_status),
       "requestTimeline":request_points,"providerObservations":provider_observations,"recentFailures":recent_failures,
       "analytics":{"eligible":eligible,"reported":sum.requests,"pending":waiting,"partial":partial,"unavailable":unavailable,"input":input,"output":output,"total":total,"timeline":points,"intervalMs":step,"bounds":bounds,"intervalLabel":if step<3_600_000{format!("{} 分钟",step/60_000)}else if step<86_400_000{format!("{} 小时",step/3_600_000)}else{format!("{} 天",step/86_400_000)},"rangeLabel":"","invalidTimes":invalid_times,"distribution":distribution,"ranking":ranking_points},
       "cache":cache,"overflow":overflow,"options":{"providers":options(providers),"callers":options(callers),"endpoints":endpoints.keys().collect::<Vec<_>>(),"statuses":statuses.keys().collect::<Vec<_>>()}}),

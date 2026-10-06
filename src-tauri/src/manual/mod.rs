@@ -16,6 +16,7 @@ pub mod migration;
 mod modalities;
 mod names;
 pub mod network;
+pub mod pricing;
 pub mod routing;
 pub mod sync;
 #[cfg(test)]
@@ -244,6 +245,11 @@ async fn manual_query_logs(
     })
     .await
     .map_err(|_| "历史查询任务失败".to_string())?
+}
+
+#[tauri::command]
+async fn manual_refresh_default_prices() -> Result<Value, String> {
+    pricing::SERVICE.refresh(&pricing::cache_path()).await
 }
 
 #[tauri::command]
@@ -839,6 +845,7 @@ pub fn run() {
                 logs::RequestLogs::open(&crate::config::get_app_config_dir().join("logs"))
                     .unwrap_or_else(logs::RequestLogs::unavailable),
             );
+            pricing::SERVICE.load(&pricing::cache_path());
             app.manage(ManualState {
                 db,
                 copilot: Arc::new(copilot::Manager::new(
@@ -878,6 +885,7 @@ pub fn run() {
             copilot::manual_copilot_open_login,
             manual_request_logs,
             manual_query_logs,
+            manual_refresh_default_prices,
             manual_retry_log_storage,
             manual_open_log_directory,
             manual_save,
