@@ -18,7 +18,7 @@ import {
   type Snapshot,
 } from "@/manual/types";
 
-vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(), isTauri: () => false }));
 const rpc = vi.mocked(invoke);
 const snapshot: Snapshot = {
   document: {

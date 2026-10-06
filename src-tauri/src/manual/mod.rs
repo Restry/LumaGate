@@ -3,6 +3,7 @@ pub mod catalog;
 pub mod completion;
 mod controls;
 pub mod copilot;
+pub mod drain;
 pub mod endpoints;
 pub mod keys;
 mod limits;
@@ -20,6 +21,7 @@ pub mod sync;
 #[cfg(test)]
 mod tests;
 pub mod token_usage;
+mod updater;
 
 use crate::{
     database::Database,
@@ -51,6 +53,7 @@ pub struct ManualState {
     pub db: Arc<Database>,
     copilot: Arc<copilot::Manager>,
     logs: std::sync::Mutex<Arc<logs::RequestLogs>>,
+    drain: Arc<drain::Gate>,
     mutation: Mutex<()>,
     server: Mutex<Option<RunningGateway>>,
     plans: Mutex<HashMap<String, PendingSync>>,
@@ -81,6 +84,9 @@ impl ManualState {
     }
     async fn save_network(&self, update: network::Update) -> Result<network::View, String> {
         let _guard = self.mutation.lock().await;
+        if self.drain.closed() {
+            return Err("更新排空期间不能更改监听设置".into());
+        }
         let saved = network::Settings::save_update(&self.db, update)?;
         // Connection previews must never silently apply a stale endpoint.
         self.plans.lock().await.clear();
@@ -89,29 +95,13 @@ impl ManualState {
 
     async fn set_gateway(&self, running: bool) -> Result<(), String> {
         let _guard = self.mutation.lock().await;
+        if self.drain.closed() {
+            return Err("更新排空期间不能启停网关，请先取消更新".into());
+        }
         let mut server = self.server.lock().await;
         if running && server.is_none() {
             let settings = network::Settings::load(&self.db)?;
-            let config = ProxyConfig {
-                listen_address: settings.listen_address.clone(),
-                listen_port: settings.listen_port,
-                ..ProxyConfig::default()
-            };
-            let logs = self.current_logs();
-            if !logs.ready() {
-                return Err(
-                    "日志库不可用，请先在调用日志页面处理；未启动网关，也未静默丢弃日志".into(),
-                );
-            }
-            // 不提供 AppHandle，禁止原有 failover UI 进入 live 配置写入服务。
-            let new_server = ProxyServer::new(config, self.db.clone(), None)
-                .with_manual_logs(logs)
-                .with_manual_copilot(self.copilot.clone());
-            new_server.start().await.map_err(|e| e.to_string())?;
-            *server = Some(RunningGateway {
-                server: new_server,
-                settings,
-            });
+            *server = Some(self.start_server(settings).await?);
             self.plans.lock().await.clear();
         } else if !running {
             if let Some(active) = server.as_ref() {
@@ -121,6 +111,37 @@ impl ManualState {
             self.plans.lock().await.clear();
         }
         Ok(())
+    }
+
+    async fn start_gateway_with(&self, settings: network::Settings) -> Result<(), String> {
+        let _guard = self.mutation.lock().await;
+        let mut server = self.server.lock().await;
+        if server.is_none() {
+            *server = Some(self.start_server(settings).await?);
+        }
+        Ok(())
+    }
+
+    async fn start_server(&self, settings: network::Settings) -> Result<RunningGateway, String> {
+        let logs = self.current_logs();
+        if !logs.ready() {
+            return Err(
+                "日志库不可用，请先在调用日志页面处理；未启动网关，也未静默丢弃日志".into(),
+            );
+        }
+        let config = ProxyConfig {
+            listen_address: settings.listen_address.clone(),
+            listen_port: settings.listen_port,
+            ..ProxyConfig::default()
+        };
+        // No AppHandle: the upstream failover UI must not write live client configurations.
+        let server = ProxyServer::new(config, self.db.clone(), None)
+            .with_manual_logs(logs)
+            .with_manual_drain(self.drain.clone())
+            .with_manual_network(settings.clone())
+            .with_manual_copilot(self.copilot.clone());
+        server.start().await.map_err(|e| e.to_string())?;
+        Ok(RunningGateway { server, settings })
     }
 }
 
@@ -553,6 +574,7 @@ async fn manual_test(
     group_id: String,
     provider_id: String,
 ) -> Result<TestResult, String> {
+    let _request = state.drain.enter()?;
     let doc = Document::load(&state.db)?;
     let (source, model) = controls::test_target(&doc, &group_id, &provider_id)?;
     let result = if source.copilot.is_some() {
@@ -795,6 +817,7 @@ pub fn run() {
         }
     };
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let db = Arc::new(Database::init()?);
             let mut doc = Document::load(&db).map_err(std::io::Error::other)?;
@@ -822,17 +845,29 @@ pub fn run() {
                     crate::config::get_app_config_dir().join("copilot"),
                 )),
                 logs: std::sync::Mutex::new(logs),
+                drain: Arc::new(drain::Gate::default()),
                 mutation: Mutex::new(()),
                 server: Mutex::new(None),
                 plans: Mutex::new(HashMap::new()),
+            });
+            let updates = updater::Updates::new(&app.state::<ManualState>().db)?;
+            app.manage(updates);
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                updater::startup(handle).await;
             });
             if let Some(window) = app.get_webview_window("main") {
                 window.show()?;
             }
             Ok(())
         })
-        // 独立命令白名单，不注册上游的 takeover / sync / MCP / updater 等隐式写入入口。
+        // Only guarded native update commands; no direct JS install/restart capability.
         .invoke_handler(tauri::generate_handler![
+            updater::manual_update_state,
+            updater::manual_update_check,
+            updater::manual_update_install,
+            updater::manual_update_later,
+            updater::manual_update_auto,
             manual_snapshot,
             copilot::manual_copilot_start,
             copilot::manual_copilot_poll,

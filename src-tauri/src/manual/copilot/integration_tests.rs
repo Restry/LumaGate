@@ -188,6 +188,7 @@ async fn catalog_refresh_commits_initial_and_subsequent_discovery_but_not_failur
         db: db.clone(),
         copilot: manager,
         logs: std::sync::Mutex::new(Arc::new(crate::manual::logs::RequestLogs::default())),
+        drain: Arc::new(crate::manual::drain::Gate::default()),
         mutation: Mutex::new(()),
         server: Mutex::new(None),
         plans: Mutex::new(std::collections::HashMap::new()),

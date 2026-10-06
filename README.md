@@ -14,6 +14,14 @@
 
 **模型测试可能计费。** 每次点击只向指定来源发送一次文本请求；不自动巡检、不切换来源替它通过。本次目录刷新无需测试模型。
 
+## 应用内更新
+
+旧版首次需从官方 Release 手动覆盖安装一次。启用更新的版本会在启动约 15 秒后及每 6 小时检查；设置中可关闭自动检查或立即手动检查。提示包含新版本、更新说明和“稍后”，确认后自动下载并验证专用签名。
+
+安装前后端暂停接收新请求（返回可重试的 HTTP 503），等待正在生成的响应完整结束并保存日志，再安装重启；等待时可取消并恢复服务。重启有短暂中断，不是零停机。仅此次更新恢复原来运行中的监听，原来停止的网关保持停止；不改端口、鉴权、路由、客户端文件或本地凭据。
+
+macOS、Windows 双架构和 Linux x64 AppImage 支持应用内安装；deb 请使用包管理器或官方安装包。签名/下载失败不替换旧应用。权限不足不会调用 sudo；安装失败不承诺自动回滚，必要时用官方安装包覆盖，保留 `~/.lumagate`。密钥备份与发布恢复见[发布指南](docs/RELEASING.md)。
+
 ## 本地数据与迁移
 
 - 可执行文件：`lumagate`；应用标识：`cn.restry.lumagate`；macOS 应用：`/Applications/LumaGate.app`。
@@ -65,7 +73,7 @@ macOS 若系统 Xcode 未就绪，可在命令上设置 `DEVELOPER_DIR=/Library/
 
 仓库仅保留 `dev` 与 `release` 两个分支，`dev` 是默认开发分支。合并前在本地完成检查与测试；推送 `dev` 和提交 PR 不运行自动 CI。维护者将完成的提交正常快进或合并到 `release`；GitHub Actions 仅负责正式发布构建、产物校验与发布，不手工覆盖版本标签或已公开资产。
 
-首个版本基础为 `3.24.0`，四处版本清单必须一致。后续同一 minor 的新提交自动分配递增 patch；同一源码 SHA 重跑复用版本。正式资产包含 macOS arm64/x64 DMG、Windows x64 NSIS、Linux x64 AppImage/deb、`BUILD-INFO.json` 与 `SHA256SUMS`。下载只认仓库 [Releases](https://github.com/Restry/LumaGate/releases)，不把 Actions 临时产物当正式发行。
+首个版本基础为 `3.24.0`，四处版本清单必须一致。后续同一 minor 的新提交自动分配递增 patch；同一源码 SHA 重跑复用版本。正式资产包含 macOS arm64/x64 DMG 与签名更新压缩包、Windows ARM64/x64 NSIS 与签名、Linux x64 AppImage 与签名及 deb，以及 `latest.json`、`BUILD-INFO.json` 和 `SHA256SUMS`。仅从官方仓库下载，不把 Actions 临时产物当正式发行。
 
 macOS 仅 ad-hoc 签名、未公证；Windows 未做 Authenticode 签名。完整流程与失败恢复见 [发布指南](docs/RELEASING.md)。
 

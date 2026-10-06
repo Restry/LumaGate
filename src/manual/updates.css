@@ -1,0 +1,60 @@
+.mg-updates {
+  max-inline-size: 1120px;
+  margin-inline: auto;
+  margin-block-end: 24px;
+  padding-block-end: 20px;
+  border-block-end: 1px solid var(--mg-line);
+  display: grid;
+  gap: 12px;
+  color: var(--mg-ink);
+  font-size: 13px;
+  line-height: 1.7;
+}
+.mg-updates[hidden] {
+  display: none;
+}
+.mg-update-heading,
+.mg-update-preference {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.mg-update-heading h2 {
+  font-size: 16px;
+  font-weight: 600;
+}
+.mg-updates p,
+.mg-update-preference span {
+  color: var(--mg-muted);
+}
+.mg-update-preference span {
+  display: block;
+}
+.mg-updates > button {
+  justify-self: start;
+}
+.mg-update-progress {
+  display: grid;
+  gap: 8px;
+}
+.mg-update-progress progress {
+  inline-size: 100%;
+  accent-color: var(--mg-ink);
+}
+.mg-update-notes {
+  margin-block: 16px;
+}
+.mg-update-notes summary {
+  cursor: pointer;
+  font-weight: 500;
+}
+.mg-update-notes pre {
+  max-block-size: 240px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  line-height: 1.7;
+  margin-block-start: 12px;
+}

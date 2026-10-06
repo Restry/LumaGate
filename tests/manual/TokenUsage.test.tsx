@@ -15,7 +15,7 @@ import {
   usageLabel,
   type TokenUsage,
 } from "@/manual/log-usage";
-vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(), isTauri: () => false }));
 vi.mock("@/manual/TokenCharts", () => ({
   default: ({ analytics }: { analytics: { total: number } }) => (
     <div>图表合计：{analytics.total}</div>

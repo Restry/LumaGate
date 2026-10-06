@@ -12,6 +12,7 @@ import {
 import { ModelCatalog } from "./ModelCatalog";
 import { NetworkSettings } from "./NetworkSettings";
 import { initialCatalogView } from "./catalog-view";
+import { Updates } from "./Updates";
 import { AgentWorkspace, type SyncReceipt } from "./AgentWorkspace";
 import {
   ProviderEditor,
@@ -264,6 +265,7 @@ export default function ManualApp({
             void copy(`${snapshot.baseUrl}/v1/models`, "模型目录地址");
         }}
       >
+        <Updates settingsVisible={tab === "settings"} />
         {!snapshot ? (
           <section className="mg-backend-state" aria-busy={loading}>
             <h1>{loadError ? "无法读取本机网关状态" : "正在读取本机网关…"}</h1>

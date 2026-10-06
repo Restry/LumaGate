@@ -160,13 +160,20 @@ jobs:
         run: python scripts/releasing/release.py stamp --version "$VERSION"
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
+      - name: Install pinned signature verifier
+        run: python -m pip install cryptography==46.0.3
       - name: Build macOS installer with ad-hoc signature
         if: runner.os == 'macOS'
         env:
           APPLE_SIGNING_IDENTITY: "-"
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: pnpm tauri build --ci --target "$TARGET" --bundles "$BUNDLES" -- --locked
       - name: Build unsigned Windows or Linux installers
         if: runner.os != 'macOS'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: pnpm tauri build --ci --target "$TARGET" --bundles "$BUNDLES" -- --locked
       - name: Verify native bundle metadata
         run: python scripts/releasing/verify_bundle.py --platform "$PLATFORM" --version "$VERSION"
@@ -207,12 +214,16 @@ jobs:
           path: artifacts
           merge-multiple: false
           digest-mismatch: error
+      - name: Install pinned signature verifier
+        run: python -m pip install cryptography==46.0.3
       - name: Validate complete matrix and generate checksums
         run: python scripts/releasing/release.py assemble --version "$VERSION" --input artifacts --output release-assets
       - name: Upload privately then promote complete release
         env:
           GH_TOKEN: ${{ github.token }}
         run: python scripts/releasing/release.py publish --version "$VERSION" --input release-assets
+      - name: Verify anonymous downloads and latest endpoint
+        run: python scripts/releasing/release.py public --version "$VERSION" --input release-assets
 
   verify-existing:
     name: Verify published rerun without overwriting
@@ -235,5 +246,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release download "$TAG" --repo Restry/LumaGate --dir published
+      - name: Install pinned signature verifier
+        run: python -m pip install cryptography==46.0.3
       - name: Verify original source and every download
         run: python scripts/releasing/release.py verify --version "$VERSION" --input published

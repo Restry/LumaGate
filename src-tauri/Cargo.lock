@@ -2903,7 +2903,7 @@ checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
 
 [[package]]
 name = "lumagate"
-version = "3.24.5"
+version = "3.24.7"
 dependencies = [
  "anyhow",
  "arboard",
@@ -2936,11 +2936,13 @@ dependencies = [
  "once_cell",
  "regex",
  "reqwest 0.12.28",
+ "reqwest 0.13.2",
  "rquickjs",
  "rusqlite",
  "rust_decimal",
  "rustls",
  "rustls-native-certs",
+ "semver",
  "serde",
  "serde_json",
  "serde_yaml",

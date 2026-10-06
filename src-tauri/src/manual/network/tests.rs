@@ -481,6 +481,7 @@ async fn listener_changes_remain_manual_and_occupied_ports_do_not_report_running
         logs: std::sync::Mutex::new(Arc::new(
             crate::manual::logs::RequestLogs::open(&f.directory.path().join("logs")).unwrap(),
         )),
+        drain: Arc::new(crate::manual::drain::Gate::default()),
         mutation: Mutex::new(()),
         server: Mutex::new(None),
         plans: Mutex::new(HashMap::new()),
@@ -535,6 +536,7 @@ async fn unavailable_log_store_keeps_state_inspectable_but_does_not_start_a_sile
         logs: std::sync::Mutex::new(Arc::new(crate::manual::logs::RequestLogs::unavailable(
             "fixture corrupt database".into(),
         ))),
+        drain: Arc::new(crate::manual::drain::Gate::default()),
         mutation: Mutex::new(()),
         server: Mutex::new(None),
         plans: Mutex::new(HashMap::new()),
@@ -560,6 +562,7 @@ async fn network_changes_invalidate_sync_plans_but_key_changes_do_not_modify_age
             f.directory.path().join("copilot"),
         )),
         logs: std::sync::Mutex::new(Arc::new(crate::manual::logs::RequestLogs::default())),
+        drain: Arc::new(crate::manual::drain::Gate::default()),
         mutation: Mutex::new(()),
         server: Mutex::new(None),
         plans: Mutex::new(HashMap::new()),

@@ -13,10 +13,13 @@ import tomllib
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
+from datetime import datetime, timezone
+from signatures import verify as verify_signature
+import tempfile
 
 REPOSITORY = "Restry/LumaGate"
 PREFIX = "lumagate-v"
-PLATFORMS = {
+LEGACY_PLATFORMS = {
     "macos-arm64": ("aarch64-apple-darwin", {"dmg": "dmg/*.dmg"}),
     "macos-x64": ("x86_64-apple-darwin", {"dmg": "dmg/*.dmg"}),
     "windows-x64": ("x86_64-pc-windows-msvc", {"exe": "nsis/*.exe"}),
@@ -29,8 +32,22 @@ PLATFORMS = {
         },
     ),
 }
+UPDATER_TARGETS = {
+    "macos-arm64": ("darwin-aarch64", "app.tar.gz", "macos/*.app.tar.gz"),
+    "macos-x64": ("darwin-x86_64", "app.tar.gz", "macos/*.app.tar.gz"),
+    "windows-x64": ("windows-x86_64", "exe", "nsis/*.exe"),
+    "windows-arm64": ("windows-aarch64", "exe", "nsis/*.exe"),
+    "linux-x64": ("linux-x86_64", "AppImage", "appimage/*.AppImage"),
+}
+PLATFORMS = {
+    platform: (target, {**patterns, UPDATER_TARGETS[platform][1]: UPDATER_TARGETS[platform][2],
+                       UPDATER_TARGETS[platform][1] + ".sig": UPDATER_TARGETS[platform][2] + ".sig"})
+    for platform, (target, patterns) in LEGACY_PLATFORMS.items()
+}
+ENDPOINT = f"https://github.com/{REPOSITORY}/releases/latest/download/latest.json"
+PUBLIC_KEY = json.loads((Path(__file__).resolve().parents[2] / "src-tauri/tauri.conf.json").read_text())["plugins"]["updater"]["pubkey"]
 WINDOWS_MACHINES = {"windows-x64": 0x8664, "windows-arm64": 0xAA64}
-INVENTORY_SCHEMA = 2
+INVENTORY_SCHEMA = 3
 
 
 def inventory_platforms(info, version):
@@ -41,7 +58,10 @@ def inventory_platforms(info, version):
             semver(version) <= (3, 24, 2),
             "New releases require the ARM64 inventory schema",
         )
-        return {p: spec for p, spec in PLATFORMS.items() if p != "windows-arm64"}
+        return {p: spec for p, spec in LEGACY_PLATFORMS.items() if p != "windows-arm64"}
+    if schema == 2:
+        require(semver(version) <= (3, 24, 6), "New releases require signed updater artifacts")
+        return LEGACY_PLATFORMS
     require(schema == INVENTORY_SCHEMA, "Unsupported release inventory schema")
     return PLATFORMS
 
@@ -52,7 +72,7 @@ def validate_windows_payload(build):
     receipt = build.get("windows_payload", {})
     payload = receipt.get("executable", {})
     installer = receipt.get("installer", {})
-    asset = build["assets"][0]
+    asset = next(a for a in build["assets"] if a["name"].endswith(".exe"))
     require(
         installer.get("sha256") == asset["sha256"]
         and installer.get("size") == asset["size"]
@@ -122,14 +142,9 @@ def manifests(root):
         tauri["productName"] == "LumaGate",
         "App owner must finish LumaGate product branding",
     )
-    require(
-        tauri.get("bundle", {}).get("createUpdaterArtifacts") is False,
-        "Unsigned distribution requires createUpdaterArtifacts=false",
-    )
-    require(
-        not tauri.get("plugins", {}).get("updater"),
-        "App owner must remove upstream updater configuration",
-    )
+    require(tauri.get("bundle", {}).get("createUpdaterArtifacts") is True, "Signed updates require createUpdaterArtifacts=true")
+    updater = tauri.get("plugins", {}).get("updater", {})
+    require(updater.get("pubkey") == PUBLIC_KEY and updater.get("endpoints") == [ENDPOINT], "Updater key/source must be pinned to LumaGate")
     return package, tauri, cargo
 
 
@@ -320,8 +335,8 @@ def reserve(api, base, sha):
     return version
 
 
-def names(version, platform):
-    return {f"LumaGate-{version}-{platform}.{ext}" for ext in PLATFORMS[platform][1]}
+def names(version, platform, platforms=None):
+    return {f"LumaGate-{version}-{platform}.{ext}" for ext in (platforms or PLATFORMS)[platform][1]}
 
 
 def file_record(path):
@@ -349,7 +364,7 @@ def stage(root, version, sha, platform, output):
         )
         source = candidates[0]
         require(
-            version in source.name,
+            platform.startswith("macos-") and ext in ("app.tar.gz", "app.tar.gz.sig") or version in source.name,
             f"Bundle filename lacks embedded build version: {source.name}",
         )
         file_record(source)
@@ -359,6 +374,9 @@ def stage(root, version, sha, platform, output):
     for source, name in sources:
         shutil.copyfile(source, output / name)
         assets.append(file_record(output / name))
+    _, extension, _ = UPDATER_TARGETS[platform]
+    asset = output / f"LumaGate-{version}-{platform}.{extension}"
+    verify_signature(asset, Path(str(asset) + ".sig").read_text(), PUBLIC_KEY)
     build = {
         "version": version,
         "sha": sha,
@@ -406,6 +424,13 @@ def assemble(source, output, version, sha):
     output.mkdir(parents=True)
     for path in sources:
         shutil.copyfile(path, output / path.name)
+    latest = {"version": version, "notes": update_notes(), "pub_date": datetime.now(timezone.utc).isoformat(), "platforms": {}}
+    for platform, (target, extension, _) in UPDATER_TARGETS.items():
+        asset = output / f"LumaGate-{version}-{platform}.{extension}"
+        signature = Path(str(asset) + ".sig").read_text().strip()
+        verify_signature(asset, signature, PUBLIC_KEY)
+        latest["platforms"][target] = {"url": f"https://github.com/{REPOSITORY}/releases/download/{PREFIX}{version}/{asset.name}", "signature": signature}
+    write_json(output / "latest.json", latest)
     write_json(
         output / "BUILD-INFO.json",
         {
@@ -414,7 +439,8 @@ def assemble(source, output, version, sha):
             "source": sha,
             "version": version,
             "tag": PREFIX + version,
-            "signing": "macOS ad-hoc only; no Apple notarization; Windows/Linux unsigned",
+            "signing": "Tauri minisign updater signatures; macOS ad-hoc only, no notarization; Windows no Authenticode",
+            "updater_public_key_sha256": hashlib.sha256(PUBLIC_KEY.encode()).hexdigest(),
             "platforms": records,
         },
     )
@@ -428,10 +454,19 @@ def assemble(source, output, version, sha):
 def validate_assets(directory, version, sha):
     info = read_json(directory / "BUILD-INFO.json")
     platforms = inventory_platforms(info, version)
-    expected = set().union(*(names(version, p) for p in platforms)) | {
-        "BUILD-INFO.json",
-        "SHA256SUMS",
-    }
+    expected = set().union(*(names(version, p, platforms) for p in platforms)) | {"BUILD-INFO.json", "SHA256SUMS"}
+    if info.get("schema") == INVENTORY_SCHEMA:
+        expected.add("latest.json")
+        latest = read_json(directory / "latest.json")
+        require(latest["version"] == version and set(latest["platforms"]) == {t[0] for t in UPDATER_TARGETS.values()}, "Updater manifest version/targets mismatch")
+        require(bool(latest.get("notes")) and datetime.fromisoformat(latest["pub_date"]).tzinfo is not None, "Updater notes/date missing")
+        require(info.get("updater_public_key_sha256") == hashlib.sha256(PUBLIC_KEY.encode()).hexdigest(), "Updater key provenance mismatch")
+        for platform, (target, extension, _) in UPDATER_TARGETS.items():
+            asset = directory / f"LumaGate-{version}-{platform}.{extension}"
+            entry = latest["platforms"][target]
+            signature = Path(str(asset) + ".sig").read_text().strip()
+            require(entry == {"signature": signature, "url": f"https://github.com/{REPOSITORY}/releases/download/{PREFIX}{version}/{asset.name}"}, f"Updater asset mapping mismatch: {target}")
+            verify_signature(asset, signature, PUBLIC_KEY)
     require(
         {p.name for p in directory.iterdir()} == expected,
         f"Release must contain exactly {len(expected)} assets",
@@ -454,10 +489,10 @@ def validate_assets(directory, version, sha):
             (build["sha"], build["version"], build["target"])
             == (sha, version, PLATFORMS[platform][0])
             and sorted(build["assets"], key=lambda asset: asset["name"])
-            == [by_name[name] for name in sorted(names(version, platform))],
+            == [by_name[name] for name in sorted(names(version, platform, platforms))],
             f"Release platform provenance mismatch: {platform}",
         )
-        if info.get("schema", 1) == INVENTORY_SCHEMA:
+        if info.get("schema", 1) >= 2:
             validate_windows_payload(build)
     expected_sums = "".join(
         f"{r['sha256']}  {r['name']}\n" for r in records if r["name"] != "SHA256SUMS"
@@ -487,6 +522,16 @@ def remote_assets(api, release, expected):
         )
 
 
+def update_notes():
+    return (
+        "新增官方签名应用内更新：启动后及每 6 小时检查，可在设置关闭或手动检查。\n"
+        "确认后自动下载并验签；等待现有模型请求完成，再安装重启。等待期间可取消，新请求暂时返回可重试的 503。\n"
+        "重启恢复原网关运行状态，保留本地数据、密钥及客户端配置。旧版需手动覆盖安装一次。\n"
+        "支持 macOS arm64/x64、Windows ARM64/x64、Linux x64 AppImage；deb 使用包管理器或官方安装包。\n"
+        "Tauri 更新签名独立于 Apple 公证和 Windows Authenticode；安装失败不承诺自动回滚。"
+    )
+
+
 def release_notes(version, sha, assets):
     tag = PREFIX + version
     links = "\n".join(
@@ -494,33 +539,12 @@ def release_notes(version, sha, assets):
         for a in assets
     )
     return (
-        f"## LumaGate {version}\n\nSource: `{sha}`\n\n{links}\n\n"
-        "Verify downloads against SHA256SUMS. BUILD-INFO.json records source and target details.\n\n"
+        f"## LumaGate {version}\n\nSource: `{sha}`\n\n{update_notes()}\n\n{links}\n\n"
+        "Verify downloads against SHA256SUMS. BUILD-INFO.json records source, targets, and Windows NSIS payload PE metadata.\n\n"
         f"Changes and verification boundaries: https://github.com/{REPOSITORY}/blob/{sha}/CHANGELOG.md\n\n"
-        "Log completion fix: protocol completion is now independent of preview truncation and "
-        "connection closure. History filters and overview totals use the same result; "
-        "only the derived index is rebuilt, leaving original request records unchanged. "
-        "A completed upstream response is not proof of downstream receipt. Real transport "
-        "errors and failed/incomplete protocol outcomes retain priority. "
-        "This does not change routing, retries, credentials or response identities.\n\n"
-        "LumaGate 3.24 introduces guarded migration to ~/.lumagate, visible provider toggles, "
-        "and model refresh that preserves existing selections on failure. "
-        "The Copilot fix reports rejected saved authorization; it does not renew an expired GitHub OAuth grant. "
-        "Live successful refresh still requires user reauthorization and was not verified with the expired account.\n\n"
-        "Streaming hotfix: Chat-to-Responses response identity is frozen after its first event; "
-        "missing upstream IDs receive a unique request ID. This prevents duplicate reconstructed replies "
-        "when later chunks change IDs. Eight loopback HTTP replay cases passed; the original remote "
-        "GPT-6 client trace was unavailable, so exact-client success is not claimed. "
-        "Native Responses IDs, opaque state and separate tool/item identities remain unchanged.\n\n"
-        "Native Windows ARM64 and x64 installers are provided separately. "
-        "BUILD-INFO.json includes extracted NSIS app PE machine/version/hash receipts; "
-        "the installer bootstrap itself may be x86. Windows needs WebView2; the default "
-        "online bootstrapper installs the runtime matching the device architecture if missing. "
-        "Windows ARM64 installation and runtime smoke testing are not claimed.\n\n"
-        "Unsigned distribution: macOS uses ad-hoc signing, NOT Apple notarization or Gatekeeper approval. "
-        "Windows may show SmartScreen/unknown publisher warnings. Linux AppImage needs execute permission "
-        "and may need FUSE; the Linux build baseline is Ubuntu 22.04. "
-        "Only install after verifying the source and checksums. No automatic updater is provided.\n"
+        "macOS uses ad-hoc signing, NOT Apple notarization. Windows has no Authenticode signature and may show SmartScreen warnings. "
+        "Windows ARM64 runtime upgrade has not been tested on this Mac. Linux AppImage may require FUSE; the build baseline is Ubuntu 22.04. "
+        "The dedicated Tauri updater signature is mandatory and independent of platform code signing.\n"
     )
 
 
@@ -548,12 +572,14 @@ def publish(api, directory, version, sha):
             return
         # Only our unpublished draft can be discarded. Never delete tags or public assets.
         api.request("DELETE", f"/releases/{release['id']}")
+    # The existing annotated tag is the source authority (asserted above and below).
+    # Explicit historical target_commitish triggers GitHub's workflow-write check
+    # when dev has advanced its workflow; GITHUB_TOKEN cannot have that permission.
     release = api.request(
         "POST",
         "/releases",
         {
             "tag_name": tag,
-            "target_commitish": sha,
             "name": f"LumaGate {version}",
             "body": release_notes(version, sha, expected),
             "draft": True,
@@ -587,11 +613,31 @@ def publish(api, directory, version, sha):
     )
 
 
+def verify_public(directory, version, sha):
+    expected = validate_assets(directory, version, sha)
+    with tempfile.TemporaryDirectory(prefix="lumagate-public-") as temporary:
+        downloaded = Path(temporary)
+        for record in expected:
+            url = f"https://github.com/{REPOSITORY}/releases/download/{PREFIX}{version}/{record['name']}"
+            with urlopen(Request(url, headers={"User-Agent": "LumaGate-release-verification"}), timeout=120) as response:
+                require(response.status == 200, "Anonymous asset GET failed")
+                with (downloaded / record["name"]).open("wb") as stream:
+                    shutil.copyfileobj(response, stream)
+            require(file_record(downloaded / record["name"]) == record, f"Public download mismatch: {record['name']}")
+        validate_assets(downloaded, version, sha)
+    with urlopen(Request(ENDPOINT, headers={"User-Agent": "LumaGate-release-verification"}), timeout=60) as response:
+        latest = json.load(response)
+    require(semver(latest["version"]) >= semver(version), "Public latest endpoint points backwards")
+    if latest["version"] == version:
+        require(latest == read_json(directory / "latest.json"), "Anonymous latest manifest mismatch")
+    print(f"Verified anonymous latest.json and {len(expected)} public downloads, hashes and updater signatures: {version}")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "command",
-        choices=["check", "reserve", "stamp", "stage", "assemble", "publish", "verify"],
+        choices=["check", "reserve", "stamp", "stage", "assemble", "publish", "verify", "public"],
     )
     parser.add_argument("--root", type=Path, default=Path.cwd())
     parser.add_argument("--version")
@@ -635,6 +681,8 @@ def main():
     elif args.command == "verify":
         records = validate_assets(args.input, args.version, args.sha)
         print(f"Verified all {len(records)} release assets and checksums")
+    elif args.command == "public":
+        verify_public(args.input, args.version, args.sha)
 
 
 if __name__ == "__main__":

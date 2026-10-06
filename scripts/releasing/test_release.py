@@ -1,6 +1,10 @@
 """Release correctness boundaries; no network, app data, or app compilation."""
 
 import copy
+import base64
+import hashlib
+from unittest.mock import patch
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 import struct
 import tempfile
 import unittest
@@ -13,6 +17,17 @@ SHA = "a" * 40
 OTHER = "b" * 40
 VERSION = "3.23.1"
 
+# Test-only deterministic key, never used by production builds.
+TEST_KEY = Ed25519PrivateKey.from_private_bytes(bytes(range(32)))
+KEY_ID = b"fixture!"
+TEST_PUBLIC = base64.b64encode(b"untrusted comment: test key\n" + base64.b64encode(b"Ed" + KEY_ID + TEST_KEY.public_key().public_bytes_raw()) + b"\n").decode()
+
+
+def sign_fixture(data):
+    signature = TEST_KEY.sign(hashlib.blake2b(data).digest())
+    comment = b"test-only fixture"
+    return base64.b64encode(b"untrusted comment: test\n" + base64.b64encode(b"ED" + KEY_ID + signature) + b"\ntrusted comment: " + comment + b"\n" + base64.b64encode(TEST_KEY.sign(signature + comment)) + b"\n").decode()
+
 
 def fixture(root, name="lumagate"):
     (root / "src-tauri").mkdir(parents=True)
@@ -22,8 +37,8 @@ def fixture(root, name="lumagate"):
         {
             "productName": "LumaGate",
             "version": VERSION,
-            "bundle": {"createUpdaterArtifacts": False},
-            "plugins": {},
+            "bundle": {"createUpdaterArtifacts": True},
+            "plugins": {"updater": {"pubkey": release.PUBLIC_KEY, "endpoints": [release.ENDPOINT]}},
         },
     )
     (root / "src-tauri/Cargo.toml").write_text(
@@ -47,7 +62,10 @@ def artifacts(root, version=VERSION, sha=SHA):
         records = []
         for name in sorted(release.names(version, platform)):
             path = directory / name
-            path.write_bytes(f"fixture installer: {name}".encode())
+            if name.endswith(".sig"):
+                path.write_text(sign_fixture(directory.joinpath(name[:-4]).read_bytes()))
+            else:
+                path.write_bytes(f"fixture installer: {name}".encode())
             records.append(release.file_record(path))
         payload = {}
         if platform in release.WINDOWS_MACHINES:
@@ -215,6 +233,9 @@ class AssetsAndPublication(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
+        signing_key = patch.object(release, "PUBLIC_KEY", TEST_PUBLIC)
+        signing_key.start()
+        self.addCleanup(signing_key.stop)
         self.source = artifacts(self.root)
         self.output = self.root / "release"
         self.api = FakeGitHub()
@@ -228,7 +249,7 @@ class AssetsAndPublication(unittest.TestCase):
         self.assertEqual(
             {record["name"] for record in records},
             set().union(*(release.names(VERSION, p) for p in release.PLATFORMS))
-            | {"BUILD-INFO.json", "SHA256SUMS"},
+            | {"BUILD-INFO.json", "SHA256SUMS", "latest.json"},
         )
         self.assertIn(
             f"LumaGate-{VERSION}-windows-arm64.exe", {r["name"] for r in records}
@@ -336,8 +357,12 @@ class AssetsAndPublication(unittest.TestCase):
         ]
         for build in info["platforms"]:
             build.pop("windows_payload", None)
+            build["assets"] = [a for a in build["assets"] if a["name"] in release.names(VERSION, build["platform"], release.LEGACY_PLATFORMS)]
         release.write_json(info_path, info)
-        (self.output / f"LumaGate-{VERSION}-windows-arm64.exe").unlink()
+        expected = set().union(*(release.names(VERSION, p, release.LEGACY_PLATFORMS) for p in release.LEGACY_PLATFORMS if p != "windows-arm64")) | {"BUILD-INFO.json", "SHA256SUMS"}
+        for path in self.output.iterdir():
+            if path.name not in expected:
+                path.unlink()
         records = [
             release.file_record(p)
             for p in sorted(self.output.iterdir())
@@ -353,6 +378,24 @@ class AssetsAndPublication(unittest.TestCase):
         )
         with self.assertRaises(ValueError):
             release.inventory_platforms(info, "3.24.3")
+
+    def test_signature_rejects_tamper_even_with_recomputed_checksums(self):
+        self.assemble()
+        asset = self.output / f"LumaGate-{VERSION}-windows-arm64.exe"
+        signature = Path(str(asset) + ".sig").read_text()
+        release.verify_signature(asset, signature, release.PUBLIC_KEY)
+        asset.write_bytes(asset.read_bytes() + b"tampered")
+        with self.assertRaises(ValueError):
+            release.verify_signature(asset, signature, release.PUBLIC_KEY)
+
+    def test_manifest_cannot_redirect_one_architecture_to_another(self):
+        self.assemble()
+        path = self.output / "latest.json"
+        latest = release.read_json(path)
+        latest["platforms"]["windows-aarch64"] = latest["platforms"]["windows-x86_64"]
+        release.write_json(path, latest)
+        with self.assertRaises(ValueError):
+            release.validate_assets(self.output, VERSION, SHA)
 
 
 class WindowsPE(unittest.TestCase):

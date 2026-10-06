@@ -57,7 +57,9 @@ pub struct ProxyServer {
     config: ProxyConfig,
     state: ProxyState,
     manual_logs: Arc<crate::manual::logs::RequestLogs>,
-    shutdown_tx: Arc<RwLock<Option<oneshot::Sender<()>>>>,
+    manual_drain: Arc<crate::manual::drain::Gate>,
+    manual_policy: Option<crate::manual::network::Settings>,
+    shutdown_tx: Arc<RwLock<Option<oneshot::Sender<bool>>>>,
     /// 服务器任务句柄，用于等待服务器实际关闭
     server_handle: Arc<RwLock<Option<JoinHandle<()>>>>,
 }
@@ -93,6 +95,8 @@ impl ProxyServer {
             config,
             state,
             manual_logs: Arc::new(crate::manual::logs::RequestLogs::default()),
+            manual_drain: Arc::new(crate::manual::drain::Gate::default()),
+            manual_policy: None,
             shutdown_tx: Arc::new(RwLock::new(None)),
             server_handle: Arc::new(RwLock::new(None)),
         }
@@ -100,6 +104,19 @@ impl ProxyServer {
 
     pub(crate) fn with_manual_logs(mut self, logs: Arc<crate::manual::logs::RequestLogs>) -> Self {
         self.manual_logs = logs;
+        self
+    }
+
+    pub(crate) fn with_manual_drain(mut self, gate: Arc<crate::manual::drain::Gate>) -> Self {
+        self.manual_drain = gate;
+        self
+    }
+
+    pub(crate) fn with_manual_network(
+        mut self,
+        settings: crate::manual::network::Settings,
+    ) -> Self {
+        self.manual_policy = Some(settings);
         self
     }
 
@@ -126,8 +143,11 @@ impl ProxyServer {
             .map_err(|e| ProxyError::BindFailed(e.to_string()))?
             .is_some()
         {
-            let policy = crate::manual::network::Settings::load(&self.state.db)
-                .map_err(ProxyError::BindFailed)?;
+            let policy = match &self.manual_policy {
+                Some(settings) => settings.clone(),
+                None => crate::manual::network::Settings::load(&self.state.db)
+                    .map_err(ProxyError::BindFailed)?,
+            };
             policy
                 .validate_listener(addr.ip())
                 .map_err(ProxyError::BindFailed)?;
@@ -146,6 +166,7 @@ impl ProxyServer {
         };
         // 创建关闭通道
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let (drain_tx, drain_rx) = tokio::sync::watch::channel(false);
 
         // 构建路由
         let is_manual = manual_policy.is_some();
@@ -185,7 +206,7 @@ impl ProxyServer {
             let mut shutdown_rx = shutdown_rx;
             // Manual stop is an access-revocation boundary, including established keep-alive/SSE.
             let mut manual_connections = tokio::task::JoinSet::new();
-            loop {
+            let graceful = loop {
                 tokio::select! {
                     result = listener.accept() => {
                         let (stream, remote_addr) = match result {
@@ -198,12 +219,17 @@ impl ProxyServer {
                         };
 
                         let app = app.clone();
+                        let mut drain = drain_rx.clone();
                         let connection = async move {
                             // Peek raw TCP bytes to capture original header casing
                             // before hyper parses (and lowercases) the header names.
                             let original_cases = {
                                 let mut peek_buf = vec![0u8; 8192];
-                                match stream.peek(&mut peek_buf).await {
+                                let peeked = tokio::select! {
+                                    value = stream.peek(&mut peek_buf) => value,
+                                    _ = drain.changed() => return,
+                                };
+                                match peeked {
                                     Ok(n) => {
                                         let cases = super::hyper_client::OriginalHeaderCases::from_raw_bytes(&peek_buf[..n]);
                                         log::debug!(
@@ -237,11 +263,18 @@ impl ProxyServer {
                                 }
                             });
 
-                            if let Err(e) = hyper::server::conn::http1::Builder::new()
-                                .preserve_header_case(true)
-                                .serve_connection(TokioIo::new(stream), service)
-                                .await
-                            {
+                            let mut builder = hyper::server::conn::http1::Builder::new();
+                            builder.preserve_header_case(true);
+                            let connection = builder.serve_connection(TokioIo::new(stream), service);
+                            tokio::pin!(connection);
+                            let outcome = tokio::select! {
+                                result = &mut connection => result,
+                                _ = drain.changed(), if is_manual => {
+                                    connection.as_mut().graceful_shutdown();
+                                    connection.await
+                                }
+                            };
+                            if let Err(e) = outcome {
                                 // Connection reset / broken pipe 等在代理场景下很常见，debug 级别
                                 log::debug!("[{SRV}] connection error: {e}", SRV = log_srv::CONN_ERR);
                             }
@@ -253,13 +286,19 @@ impl ProxyServer {
                         }
                     }
                     _ = manual_connections.join_next(), if !manual_connections.is_empty() => {}
-                    _ = &mut shutdown_rx => {
-                        break;
+                    mode = &mut shutdown_rx => {
+                        break mode.unwrap_or(false);
                     }
                 }
-            }
+            };
 
-            manual_connections.shutdown().await;
+            drop(listener);
+            if graceful {
+                drain_tx.send_replace(true);
+                while manual_connections.join_next().await.is_some() {}
+            } else {
+                manual_connections.shutdown().await;
+            }
             // 服务器停止后更新状态
             state.status.write().await.running = false;
             *state.start_time.write().await = None;
@@ -276,9 +315,17 @@ impl ProxyServer {
     }
 
     pub async fn stop(&self) -> Result<(), ProxyError> {
+        self.stop_mode(false).await
+    }
+
+    pub(crate) async fn stop_drained(&self) -> Result<(), ProxyError> {
+        self.stop_mode(true).await
+    }
+
+    async fn stop_mode(&self, graceful: bool) -> Result<(), ProxyError> {
         // 1. 发送关闭信号
         if let Some(tx) = self.shutdown_tx.write().await.take() {
-            let _ = tx.send(());
+            let _ = tx.send(graceful);
         } else {
             return Err(ProxyError::NotRunning);
         }
@@ -369,6 +416,10 @@ impl ProxyServer {
                 .layer(axum::middleware::from_fn_with_state(
                     self.manual_logs.clone(),
                     crate::manual::logs::capture,
+                ))
+                .layer(axum::middleware::from_fn_with_state(
+                    self.manual_drain.clone(),
+                    crate::manual::drain::admission,
                 ))
                 .with_state(self.state.clone());
         }

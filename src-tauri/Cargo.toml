@@ -1,6 +1,6 @@
 [package]
 name = "lumagate"
-version = "3.24.5"
+version = "3.24.7"
 description = "LumaGate — local model gateway for Pi, Claude Code and Codex"
 authors = ["Restry", "LumaGate contributors"]
 license = "MIT"
@@ -31,7 +31,9 @@ tauri = { version = "2.8.2", features = ["tray-icon", "protocol-asset", "image-p
 tauri-plugin-log = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-process = "2"
-tauri-plugin-updater = "2"
+tauri-plugin-updater = "=2.10.0"
+reqwest-updater = { package = "reqwest", version = "0.13", default-features = false }
+semver = "1"
 tauri-plugin-dialog = "2"
 tauri-plugin-store = "2"
 tauri-plugin-deep-link = "2"

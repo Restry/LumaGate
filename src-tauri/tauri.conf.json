@@ -32,7 +32,7 @@
   },
   "bundle": {
     "active": true,
-    "createUpdaterArtifacts": false,
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -55,7 +55,17 @@
     }
   },
   "identifier": "cn.restry.lumagate",
-  "plugins": {},
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/Restry/LumaGate/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEI5OUJBQTlERTRFRjVENzcKUldSM1hlL2tuYXFidVlQVDNZZ0NqZytJbjZuQUFkQ3FvN1pXWFJhZEhua2xnZmxqUUZvTEJ2eWMK",
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  },
   "productName": "LumaGate",
-  "version": "3.24.5"
+  "version": "3.24.7"
 }

@@ -13,7 +13,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { RequestLogs, type RequestLog } from "@/manual/RequestLogs";
 import type { HistoryQuery, HistoryReply } from "@/manual/log-history";
 import { historyFixture, readyStorage } from "./history-fixture";
-vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(), isTauri: () => false }));
 const rpc = vi.mocked(invoke);
 const base: RequestLog = {
   id: 2,

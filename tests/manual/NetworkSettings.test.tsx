@@ -9,7 +9,7 @@ import type {
   GatewayNetworkUpdate,
   Snapshot,
 } from "@/manual/types";
-vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(), isTauri: () => false }));
 const rpc = vi.mocked(invoke);
 const A = "fixture-key-a-0123456789abcdef0123456789abcdef";
 const B = "fixture-key-b-0123456789abcdef0123456789abcdef";
