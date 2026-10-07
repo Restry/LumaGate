@@ -21,7 +21,7 @@ fn exact_rates_split_cache_and_long_context_without_rounding() {
     assert_eq!(total.value(Value::Null)["totals"]["USD"], "5.45342");
 }
 #[test]
-fn unknown_zero_partial_and_currencies_remain_distinct() {
+fn unknown_zero_estimated_and_currencies_remain_distinct() {
     let mut catalog = Catalog::bundled();
     let mut zero = catalog.models["gpt-6-astra"].clone();
     zero.short = Rates {
@@ -42,8 +42,8 @@ fn unknown_zero_partial_and_currencies_remain_distinct() {
     request = meter();
     request.write = None;
     total.add(&catalog, &request);
-    assert_eq!(total.value(Value::Null)["partial"], 1);
-    assert_eq!(total.value(Value::Null)["totals"]["USD"], "0.0108");
+    assert_eq!(total.value(Value::Null)["estimated"], 1);
+    assert_eq!(total.value(Value::Null)["totals"]["USD"], "0.0128");
     let mut cny = catalog.models["gpt-6-astra"].clone();
     cny.currency = "CNY".into();
     catalog.models.insert("cny-fixture".into(), cny);
@@ -51,7 +51,7 @@ fn unknown_zero_partial_and_currencies_remain_distinct() {
     request.model = Some("cny-fixture".into());
     total.add(&catalog, &request);
     assert_eq!(total.value(Value::Null)["totals"]["CNY"], "0.0128");
-    assert_eq!(total.value(Value::Null)["totals"]["USD"], "0.0108");
+    assert_eq!(total.value(Value::Null)["totals"]["USD"], "0.0128");
 }
 #[test]
 fn normalized_anthropic_input_deducts_reads_and_writes_once() {
@@ -88,8 +88,9 @@ fn normalized_anthropic_input_deducts_reads_and_writes_once() {
         .write = None;
     let mut total = Estimate::default();
     total.add(&catalog, &request);
-    assert_eq!(total.value(Value::Null)["partial"], 1);
-    assert_eq!(total.value(Value::Null)["parts"]["USD"][0], "0.0003");
+    assert_eq!(total.value(Value::Null)["estimated"], 1);
+    assert_eq!(total.value(Value::Null)["parts"]["USD"][0], "0.0015");
+    assert_eq!(total.value(Value::Null)["totals"]["USD"], "0.0048");
 }
 fn page() -> String {
     let mut page=String::from("Prices per 1M tokens.\nShort context: ≤272K input tokens. Long context: >272K input tokens.\n### Standard pricing data\n");
@@ -141,4 +142,25 @@ fn malformed_refresh_and_disk_failures_keep_last_good_catalog() {
 #[test]
 fn bundled_catalog_obeys_validation_contract() {
     Catalog::bundled().validate().unwrap();
+}
+
+#[test]
+fn unresolved_cache_and_legacy_model_are_estimates_not_missing_spend() {
+    let catalog = Catalog::bundled();
+    let mut request = meter();
+    request.model = None;
+    request.requested = Some("gpt-6-astra".into());
+    request.read = None;
+    request.write = None;
+    let mut total = Estimate::default();
+    total.add(&catalog, &request);
+    assert_eq!(total.value(Value::Null)["totals"]["USD"], "0.02");
+    assert_eq!(
+        total.value(Value::Null)["assumptions"],
+        json!({"model":1,"input":1})
+    );
+    request.model = Some("FW-gpt-6-astra".into());
+    total.add(&catalog, &request);
+    assert_eq!(total.value(Value::Null)["totals"]["USD"], "0.02");
+    assert_eq!(total.value(Value::Null)["excluded"], 1);
 }

@@ -1,11 +1,4 @@
-import {
-  act,
-  cleanup,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
@@ -14,7 +7,10 @@ import ManualApp from "@/manual/ManualApp";
 import { RequestLogs, type RequestLog } from "@/manual/RequestLogs";
 import type { Snapshot } from "@/manual/types";
 import { historyFixture, readyStorage } from "./history-fixture";
-vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(), isTauri: () => false }));
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: vi.fn(),
+  isTauri: () => false,
+}));
 vi.mock("recharts", () => ({
   ResponsiveContainer: ({ children }: { children: ReactNode }) => (
     <div>{children}</div>
@@ -107,6 +103,28 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 describe("实际客户端 Dashboard 迁移", () => {
+  it("全部范围纳入旧记录，七天范围不混入更早用量", async () => {
+    rows.push({
+      ...rows[0],
+      id: 0,
+      startedAt: new Date(Date.now() - 20 * 86400000).toISOString(),
+      model: "older-model",
+    });
+    const user = userEvent.setup();
+    render(<ManualApp initialWorkspace="overview" />);
+    const metrics = await screen.findByLabelText("概览核心指标");
+    await waitFor(() => expect(metrics).toHaveTextContent("120"));
+    await user.click(screen.getByRole("combobox", { name: "概览时间范围" }));
+    await user.click(screen.getByRole("option", { name: "全部" }));
+    await waitFor(() => expect(metrics).toHaveTextContent("240"));
+    expect(screen.getByRole("button", { name: /older-model/ })).toBeVisible();
+    await user.click(screen.getByRole("combobox", { name: "概览时间范围" }));
+    await user.click(screen.getByRole("option", { name: "最近 7 天" }));
+    await waitFor(() => expect(metrics).toHaveTextContent("120"));
+    expect(
+      screen.queryByRole("button", { name: /older-model/ }),
+    ).not.toBeInTheDocument();
+  });
   it("入口默认折叠，概览只读真实 IPC，并正确区分失败与未知用量", async () => {
     render(<ManualApp initialWorkspace="overview" />);
     const metrics = await screen.findByLabelText("概览核心指标");
@@ -154,9 +172,6 @@ describe("实际客户端 Dashboard 迁移", () => {
     render(<ManualApp initialWorkspace="overview" />);
     expect(await screen.findByRole("alert")).toHaveTextContent("读取失败");
     expect(screen.queryByText(/PRIVATE_BACKEND_ERROR/)).not.toBeInTheDocument();
-    expect(
-      within(screen.getByLabelText("概览核心指标")).getAllByText("—"),
-    ).toHaveLength(4);
     fail = false;
     await user.click(screen.getByRole("button", { name: "刷新概览" }));
     await screen.findByText("1 次失败 · 1 次待确认");

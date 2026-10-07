@@ -300,15 +300,21 @@ pub struct Meter {
 pub struct Estimate {
     totals: BTreeMap<String, Decimal>,
     parts: BTreeMap<String, [Decimal; 4]>,
-    part_known: BTreeMap<String, [u64; 4]>,
     covered: u64,
-    partial: u64,
+    estimated: u64,
+    model_assumptions: u64,
+    input_assumptions: u64,
     excluded: u64,
     missing: BTreeMap<(String, String), u64>,
 }
 impl Estimate {
     pub fn add(&mut self, catalog: &Catalog, meter: &Meter) {
-        let model = meter.model.as_deref().unwrap_or("");
+        // Historical request-model equivalent only when no final identity contradicts it.
+        let model = meter
+            .model
+            .as_deref()
+            .or(meter.requested.as_deref())
+            .unwrap_or("");
         let Some(price) = catalog.models.get(model) else {
             self.excluded += 1;
             self.missing(
@@ -342,28 +348,32 @@ impl Estimate {
         } else {
             &price.short
         };
-        let write = meter.write.or_else(|| r.write.is_none().then_some(0));
-        let fresh = meter
-            .read
-            .zip(write)
-            .and_then(|(a, b)| input.checked_sub(a.checked_add(b)?));
-        let charge = |tokens: Option<u64>, rate: Option<Decimal>| -> Option<Decimal> {
-            let n = tokens?;
-            if n == 0 {
-                Some(Decimal::ZERO)
-            } else {
-                Decimal::from(n)
-                    .checked_mul(rate?)?
-                    .checked_div(Decimal::from(1_000_000))
-            }
+        // Unknown splits are valued at ordinary input price, not treated as measured zero.
+        // Only known, priced cache portions leave the ordinary-input bucket.
+        let read = meter.read.filter(|_| r.read.is_some()).unwrap_or(0);
+        let write = meter.write.filter(|_| r.write.is_some()).unwrap_or(0);
+        let fresh = input - read - write;
+        let input_assumed = meter.read.is_none()
+            || (meter.write.is_none() && r.write.is_some())
+            || (meter.read.is_some_and(|n| n > 0) && r.read.is_none())
+            || (meter.write.is_some_and(|n| n > 0) && r.write.is_none());
+        let model_assumed = meter.model.is_none();
+        let charge = |tokens: u64, rate: Decimal| {
+            Decimal::from(tokens)
+                .checked_mul(rate)?
+                .checked_div(Decimal::from(1_000_000))
         };
         let amounts = [
-            charge(fresh, Some(r.input)),
-            charge(Some(output), Some(r.output)),
-            charge(meter.read, r.read),
-            charge(write, r.write),
+            charge(fresh, r.input),
+            charge(output, r.output),
+            charge(read, r.read.unwrap_or_default()),
+            charge(write, r.write.unwrap_or_default()),
         ];
-        let complete = amounts.iter().all(Option::is_some);
+        if amounts.iter().any(Option::is_none) {
+            self.excluded += 1;
+            self.missing(meter, "金额超出精确范围");
+            return;
+        }
         let part = self.parts.entry(price.currency.clone()).or_default();
         let mut next = *part;
         for (i, amount) in amounts.into_iter().enumerate() {
@@ -385,19 +395,11 @@ impl Estimate {
             return;
         };
         *part = next;
-        let known = self.part_known.entry(price.currency.clone()).or_default();
-        for (i, amount) in amounts.iter().enumerate() {
-            if amount.is_some() {
-                known[i] += 1;
-            }
-        }
         self.totals.insert(price.currency.clone(), total);
-        if complete {
-            self.covered += 1;
-        } else {
-            self.partial += 1;
-            self.missing(meter, "缓存计数或写入价格不完整");
-        }
+        self.covered += 1;
+        self.estimated += u64::from(input_assumed || model_assumed);
+        self.model_assumptions += u64::from(model_assumed);
+        self.input_assumptions += u64::from(input_assumed);
     }
     fn missing(&mut self, meter: &Meter, reason: &str) {
         let model = meter
@@ -422,20 +424,10 @@ impl Estimate {
         let parts: BTreeMap<_, _> = self
             .parts
             .iter()
-            .map(|(c, n)| {
-                (
-                    c,
-                    std::array::from_fn::<_, 4, _>(|i| {
-                        self.part_known
-                            .get(c)
-                            .is_some_and(|known| known[i] > 0)
-                            .then(|| n[i].normalize().to_string())
-                    }),
-                )
-            })
+            .map(|(c, n)| (c, n.map(|v| v.normalize().to_string())))
             .collect();
         let missing: Vec<_> = self.missing.iter().map(|((model,reason),requests)|json!({"model":model,"reason":reason,"requests":requests})).collect();
-        json!({"totals":totals,"parts":parts,"covered":self.covered,"partial":self.partial,"excluded":self.excluded,"missing":missing,"catalog":status})
+        json!({"totals":totals,"parts":parts,"covered":self.covered,"estimated":self.estimated,"assumptions":{"model":self.model_assumptions,"input":self.input_assumptions},"excluded":self.excluded,"missing":missing,"catalog":status})
     }
 }
 #[cfg(test)]

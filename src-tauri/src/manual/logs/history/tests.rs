@@ -435,3 +435,44 @@ fn default_cost_uses_final_route_on_failure_and_excludes_unforwarded_checks() {
     assert_eq!(cost["covered"], 1);
     assert_eq!(cost["excluded"], 0);
 }
+
+#[test]
+fn legacy_estimate_includes_input_and_respects_range_without_rewriting_history() {
+    let temp = tempfile::tempdir().unwrap();
+    let logs = RequestLogs::open(temp.path()).unwrap();
+    save(&logs, entry(18, "gpt-6-astra"));
+    save(&logs, entry(24, "gpt-6-astra"));
+    logs.flush().unwrap();
+    let db = Connection::open(temp.path().join("requests.sqlite3")).unwrap();
+    let original: String = db
+        .query_row(
+            "SELECT record_json FROM request_logs ORDER BY id LIMIT 1",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let all = logs.query_history(&Query::default()).unwrap();
+    // Historical request-model equivalent: (20*10 + 80*1 + 20*50) / 1M each.
+    assert_eq!(all["cost"]["totals"]["USD"], "0.00256");
+    assert_eq!(all["cost"]["covered"], 2);
+    assert_eq!(all["cost"]["estimated"], 2);
+    let from = chrono::DateTime::parse_from_rfc3339("2026-09-24T00:00:00Z")
+        .unwrap()
+        .timestamp_millis();
+    let recent = logs
+        .query_history(&Query {
+            from: Some(from),
+            ..Query::default()
+        })
+        .unwrap();
+    assert_eq!(recent["cost"]["totals"]["USD"], "0.00128");
+    assert_eq!(recent["cost"]["covered"], 1);
+    let unchanged: String = db
+        .query_row(
+            "SELECT record_json FROM request_logs ORDER BY id LIMIT 1",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(original, unchanged);
+}

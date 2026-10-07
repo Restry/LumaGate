@@ -3,7 +3,6 @@ import { invoke } from "@tauri-apps/api/core";
 import {
   Activity,
   ArrowRight,
-  Database,
   Info,
   RefreshCw,
   ShieldCheck,
@@ -42,7 +41,7 @@ type Props = {
   onProviders: () => void;
 };
 export function Overview({ snapshot, onLogs, onProviders }: Props) {
-  const [period, setPeriod] = useState<"day" | "week">("day"),
+  const [period, setPeriod] = useState<"day" | "week" | "all">("day"),
     [metric, setMetric] = useState("requests"),
     [refresh, setRefresh] = useState(0);
   const [result, setResult] = useState<HistoryPage | null>(null),
@@ -152,10 +151,11 @@ export function Overview({ snapshot, onLogs, onProviders }: Props) {
           <Choice
             label="概览时间范围"
             value={period}
-            onChange={(v) => setPeriod(v as "day" | "week")}
+            onChange={(v) => setPeriod(v as "day" | "week" | "all")}
             options={[
               { value: "day", label: "最近 24 小时" },
               { value: "week", label: "最近 7 天" },
+              { value: "all", label: "全部" },
             ]}
           />
           <ActionButton
@@ -206,23 +206,16 @@ export function Overview({ snapshot, onLogs, onProviders }: Props) {
           <p>
             输入 {usage?.input == null ? "—" : compactTokens(usage.input)} /
             输出 {usage?.output == null ? "—" : compactTokens(usage.output)}
+            <br />
+            缓存 <RollingNumber value={result?.cache.share} kind="percent" />
+            {result?.cache.read != null &&
+              ` · ${compactTokens(result.cache.read)} Token`}
           </p>
         </article>
-        <article>
-          <div className="mc-metric-label">
-            缓存占比
-            <Database size={15} />
-          </div>
-          <strong>
-            <RollingNumber value={result?.cache.share} kind="percent" />
-          </strong>
-          <p>
-            {result?.cache.read == null
-              ? "—"
-              : compactTokens(result.cache.read)}{" "}
-            缓存读取 · 包含在输入中
-          </p>
-        </article>
+        <DefaultCost
+          data={result?.cost}
+          onRefresh={() => setRefresh((v) => v + 1)}
+        />
         <article>
           <div className="mc-metric-label">
             成功率
@@ -238,10 +231,6 @@ export function Overview({ snapshot, onLogs, onProviders }: Props) {
           </p>
         </article>
       </div>
-      <DefaultCost
-        data={result?.cost}
-        onRefresh={() => setRefresh((v) => v + 1)}
-      />
       {result?.overflow && (
         <p className="mc-notice" role="alert">
           累计用量超过精确展示范围。请缩小时间范围；未填入近似值。

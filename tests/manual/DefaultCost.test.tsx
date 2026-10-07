@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
@@ -9,7 +9,8 @@ const data: DefaultCostData = {
   totals: { USD: "0.0000001" },
   parts: { USD: ["0", "0.0000001", "0", "0"] },
   covered: 1,
-  partial: 0,
+  estimated: 1,
+  assumptions: { model: 1, input: 1 },
   excluded: 1,
   missing: [{ model: "custom-alias", reason: "未定价", requests: 1 }],
   catalog: {
@@ -21,31 +22,39 @@ const data: DefaultCostData = {
     unit: "per 1M tokens",
   },
 };
-it("keeps tiny nonzero amounts, unknown models and refresh failure visible", async () => {
+it("discloses precise estimates and missing models without replacing cached amounts on refresh failure", async () => {
   vi.mocked(invoke).mockRejectedValue("价格来源不可达，保留上次目录");
   const user = userEvent.setup();
   render(<DefaultCost data={data} onRefresh={() => {}} />);
-  expect(screen.getByText("USD <0.000001")).toBeInTheDocument();
+  expect(screen.getByLabelText("预估费用")).toHaveTextContent("USD <0.000001");
+  expect(screen.queryByText(/custom-alias/)).not.toBeInTheDocument();
   await user.tab();
   await user.keyboard("{Enter}");
-  expect(await screen.findByText("精确合计：USD 0.0000001")).toBeVisible();
-  await user.click(screen.getByText("查看未计入或部分计价的模型"));
-  expect(screen.getByText("custom-alias · 未定价 · 1 条")).toBeVisible();
-  await user.click(screen.getByRole("button", { name: "更新默认单价" }));
+  const detail = await screen.findByRole("dialog", { name: "费用明细" });
+  expect(detail).toHaveTextContent("USD 0.0000001");
+  expect(detail).toHaveTextContent("未记录的缓存拆分按普通输入价估算");
+  await user.click(within(detail).getByText("未计入记录"));
+  expect(within(detail).getByText(/custom-alias/)).toBeVisible();
+  await user.click(within(detail).getByRole("button", { name: "更新价格" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("保留上次目录");
-  expect(screen.getByText("精确合计：USD 0.0000001")).toBeVisible();
+  expect(detail).toHaveTextContent("USD 0.0000001");
   await user.keyboard("{Escape}");
-  expect(
-    screen.getByRole("button", { name: "费用口径与价格来源" }),
-  ).toHaveFocus();
+  expect(screen.getByRole("button", { name: "费用明细" })).toHaveFocus();
 });
-it("does not turn entirely unpriced usage into a zero-dollar bill", () => {
-  render(
+it("distinguishes unpriced use from explicitly free use", () => {
+  const view = render(
     <DefaultCost
       data={{ ...data, totals: {}, parts: {}, covered: 0 }}
       onRefresh={() => {}}
     />,
   );
-  expect(screen.getByText("未计价")).toBeVisible();
-  expect(screen.queryByText(/USD/)).not.toBeInTheDocument();
+  expect(screen.getByLabelText("预估费用")).toHaveTextContent("未计价");
+  view.rerender(
+    <DefaultCost
+      data={{ ...data, totals: { USD: "0" }, excluded: 0, missing: [] }}
+      onRefresh={() => {}}
+    />,
+  );
+  expect(screen.getByLabelText("预估费用")).toHaveTextContent("USD 0.00");
+  expect(screen.queryByText("未计价")).not.toBeInTheDocument();
 });

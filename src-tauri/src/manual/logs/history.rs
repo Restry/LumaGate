@@ -259,7 +259,7 @@ fn project(id: u64, row: &Value) -> Meta {
     } else {
         "unavailable"
     };
-    // Only explicit recorded final identity; never infer it from a requested alias.
+    // Retain observed identity separately from the requested-model estimate basis.
     let model = row
         .get("effectiveModel")
         .and_then(Value::as_str)
@@ -267,7 +267,16 @@ fn project(id: u64, row: &Value) -> Meta {
         .filter(|s| !s.is_empty() && s.len() <= 160 && !s.chars().any(char::is_control));
     let meter = (eligible && !providers.is_empty()).then(|| crate::manual::pricing::Meter {
         model: model.map(str::to_owned),
-        requested: row.get("model").and_then(Value::as_str).map(str::to_owned),
+        requested: row
+            .get("model")
+            .and_then(Value::as_str)
+            .filter(|_| {
+                !row.get("routeNote")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .contains("跨模型")
+            })
+            .map(str::to_owned),
         input: usage.as_ref().map(|u| u.input),
         output: usage.as_ref().map(|u| u.output),
         read: usage.as_ref().and_then(|u| u.cache),
@@ -316,13 +325,13 @@ pub(super) fn initialize(conn: &mut Connection) -> rusqlite::Result<()> {
             |r| r.get(0),
         )
         .optional()?;
-    if version != Some(3) {
+    if version != Some(4) {
         tx.execute(
             "INSERT OR IGNORE INTO manual_log_dirty_v1 SELECT id FROM request_logs",
             [],
         )?;
         tx.execute(
-            "INSERT OR REPLACE INTO manual_log_projection_version VALUES(1,3)",
+            "INSERT OR REPLACE INTO manual_log_projection_version VALUES(1,4)",
             [],
         )?;
     }
