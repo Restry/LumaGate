@@ -12,7 +12,16 @@ const data: DefaultCostData = {
   estimated: 1,
   assumptions: { model: 1, input: 1 },
   excluded: 1,
-  missing: [{ model: "custom-alias", reason: "未定价", requests: 1 }],
+  optedOut: 0,
+  missing: [
+    {
+      providerId: "fixture",
+      provider: "Fixture provider",
+      model: "custom-alias",
+      reason: "未定价",
+      requests: 1,
+    },
+  ],
   catalog: {
     source: "https://developers.openai.com/api/docs/pricing.md",
     fetchedAt: "2026-10-06T00:00:00Z",
@@ -27,6 +36,7 @@ it("discloses precise estimates and missing models without replacing cached amou
   const user = userEvent.setup();
   render(<DefaultCost data={data} onRefresh={() => {}} />);
   expect(screen.getByLabelText("预估费用")).toHaveTextContent("USD <0.000001");
+  expect(screen.getByLabelText("预估费用")).toHaveTextContent("部分预估");
   expect(screen.queryByText(/custom-alias/)).not.toBeInTheDocument();
   await user.tab();
   await user.keyboard("{Enter}");
@@ -35,6 +45,7 @@ it("discloses precise estimates and missing models without replacing cached amou
   expect(detail).toHaveTextContent("未记录的缓存拆分按普通输入价估算");
   await user.click(within(detail).getByText("未计入记录"));
   expect(within(detail).getByText(/custom-alias/)).toBeVisible();
+  expect(detail).toHaveTextContent("Fixture provider");
   await user.click(within(detail).getByRole("button", { name: "更新价格" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("保留上次目录");
   expect(detail).toHaveTextContent("USD 0.0000001");
@@ -57,4 +68,33 @@ it("distinguishes unpriced use from explicitly free use", () => {
   );
   expect(screen.getByLabelText("预估费用")).toHaveTextContent("USD 0.00");
   expect(screen.queryByText("未计价")).not.toBeInTheDocument();
+});
+
+it("keeps deliberate opt-outs distinct from unavailable pricing", async () => {
+  render(
+    <DefaultCost
+      data={{
+        ...data,
+        excluded: 0,
+        optedOut: 3,
+        missing: [
+          {
+            providerId: "cp",
+            provider: "GitHub Copilot",
+            model: "copilot/gpt-4o-mini",
+            reason: "已关闭费用估算",
+            requests: 3,
+          },
+        ],
+      }}
+      onRefresh={() => {}}
+    />,
+  );
+  expect(screen.getByLabelText("预估费用")).toHaveTextContent("3 条已关闭");
+  expect(screen.queryByText("部分预估")).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "费用明细" }));
+  await userEvent.click(screen.getByText("未计入记录"));
+  expect(screen.getByRole("dialog")).toHaveTextContent(
+    "GitHub Copilot · copilot/gpt-4o-mini · 已关闭费用估算",
+  );
 });

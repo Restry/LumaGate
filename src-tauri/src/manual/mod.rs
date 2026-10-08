@@ -181,6 +181,19 @@ async fn manual_set_provider_enabled(
         .await
 }
 
+#[tauri::command]
+async fn manual_set_provider_cost_estimation(
+    state: State<'_, ManualState>,
+    provider_id: String,
+    enabled: bool,
+    revision: u64,
+) -> Result<(), String> {
+    let _guard = state.mutation.lock().await;
+    let mut doc = Document::load(&state.db)?;
+    controls::set_cost_estimation(&mut doc, &provider_id, enabled, revision)?;
+    doc.save(&state.db)
+}
+
 fn mirror_sources(db: &Database, doc: &Document) -> Result<(), String> {
     for app in ["claude", "codex"] {
         for source in &doc.providers {
@@ -231,9 +244,10 @@ async fn manual_request_logs(state: State<'_, ManualState>) -> Result<Vec<Value>
 #[tauri::command]
 async fn manual_query_logs(
     state: State<'_, ManualState>,
-    query: logs::history::Query,
+    mut query: logs::history::Query,
 ) -> Result<Value, String> {
     query.validate()?;
+    query.apply_cost_settings(&Document::load(&state.db)?);
     let logs = state.current_logs();
     if !logs.ready() {
         return Ok(json!({"storage":logs.storage_status()}));
@@ -890,6 +904,7 @@ pub fn run() {
             manual_open_log_directory,
             manual_save,
             manual_set_provider_enabled,
+            manual_set_provider_cost_estimation,
             manual_set_model_protocol,
             manual_set_model_blocked,
             manual_discover,

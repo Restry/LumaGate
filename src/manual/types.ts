@@ -29,6 +29,7 @@ export interface Source {
   copilot?: { accountId: string; grantId: string } | null;
   protocol: Protocol;
   enabled: boolean;
+  costEstimationEnabled?: boolean;
   models: Model[];
 }
 export type KeyUpdate =
@@ -255,6 +256,7 @@ export function emptySource(): Source {
     keyEnv: "",
     protocol: "openai_chat",
     enabled: true,
+    costEstimationEnabled: true,
     models: [],
   };
 }

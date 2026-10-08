@@ -95,7 +95,7 @@ export function Overview({ snapshot, onLogs, onProviders }: Props) {
       active = false;
       clearTimeout(timer);
     };
-  }, [period, refresh]);
+  }, [period, refresh, snapshot.document.revision]);
   const stats = result?.stats,
     usage = result?.analytics,
     rate =

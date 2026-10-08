@@ -195,6 +195,7 @@ async fn integration(
         copilot: None,
         protocol,
         enabled: true,
+        cost_estimation_enabled: true,
         models: vec![model],
     };
     let (server, base, doc) = gateway(vec![provider]).await;

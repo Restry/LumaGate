@@ -70,6 +70,38 @@ async fn commit_adds_only_one_isolated_provider_and_never_returns_credentials() 
         );
     }
 }
+
+#[tokio::test]
+async fn copilot_cost_estimation_defaults_on_and_reauthorization_preserves_opt_out() {
+    let dir = tempfile::tempdir().unwrap();
+    let manager = Manager::new(dir.path().join("copilot"));
+    let db = Database::memory().unwrap();
+    let auth = ready(&manager, 0).await;
+    commands::link(&manager, &db, "flow-fixture", auth)
+        .await
+        .unwrap();
+    let mut doc = Document::load(&db).unwrap();
+    assert!(doc.providers[0].cost_estimation_enabled);
+    let mut legacy = serde_json::to_value(&doc.providers[0]).unwrap();
+    legacy
+        .as_object_mut()
+        .unwrap()
+        .remove("costEstimationEnabled");
+    assert!(
+        serde_json::from_value::<Source>(legacy)
+            .unwrap()
+            .cost_estimation_enabled
+    );
+    doc.providers[0].cost_estimation_enabled = false;
+    doc.save(&db).unwrap();
+    let auth = ready(&manager, doc.revision).await;
+    commands::link(&manager, &db, "flow-fixture", auth)
+        .await
+        .unwrap();
+    let restored = Document::load(&db).unwrap();
+    assert!(!restored.providers[0].cost_estimation_enabled);
+    assert!(restored.providers[0].enabled);
+}
 #[tokio::test]
 async fn stale_or_cancelled_authorizations_do_not_write_credentials_or_provider_data() {
     let dir = tempfile::tempdir().unwrap();
@@ -336,6 +368,7 @@ async fn concurrent_refresh_is_single_flight_and_routes_keep_stable_account_iden
         copilot: Some(binding),
         protocol: Protocol::OpenaiChat,
         enabled: true,
+        cost_estimation_enabled: true,
         models: vec![model.clone()],
     };
     for app in ["claude", "codex"] {
@@ -388,6 +421,7 @@ async fn bare_model_names_reach_the_real_router_without_login_or_network_calls()
         copilot: Some(binding),
         protocol: Protocol::OpenaiChat,
         enabled: true,
+        cost_estimation_enabled: true,
         models: vec![model],
     };
     let mut doc = Document {
@@ -471,6 +505,7 @@ fn existing_api_names_are_not_hijacked_even_when_blocked_and_config_resolution_s
         copilot: None,
         protocol: Protocol::OpenaiChat,
         enabled: true,
+        cost_estimation_enabled: true,
         models: vec![normal],
     };
     let copilot = Source {
@@ -485,6 +520,7 @@ fn existing_api_names_are_not_hijacked_even_when_blocked_and_config_resolution_s
         }),
         protocol: Protocol::OpenaiChat,
         enabled: true,
+        cost_estimation_enabled: true,
         models: vec![cp],
     };
     let mut doc = Document {
@@ -531,6 +567,7 @@ fn native_messages_are_preserved_and_ordinary_sources_cannot_claim_the_copilot_n
         copilot: None,
         protocol: Protocol::OpenaiChat,
         enabled: true,
+        cost_estimation_enabled: true,
         models,
     };
     assert!(Document {

@@ -29,6 +29,7 @@ export function ProviderList({
   feedback,
   refreshingId,
   onToggle,
+  onCostEstimation,
   copilotStatus,
   onCopilotLogin,
   onCopilotReset,
@@ -43,6 +44,7 @@ export function ProviderList({
   disabled: boolean;
   refreshingId?: string | null;
   onToggle: (source: Source, enabled: boolean) => void;
+  onCostEstimation: (source: Source, enabled: boolean) => void;
   feedback: ProviderFeedback;
   copilotStatus?: {
     connected: boolean;
@@ -263,6 +265,19 @@ export function ProviderList({
                         </dd>
                       </div>
                     </dl>
+                    <div className="mc-provider-operation">
+                      <label className="mc-source-status">
+                        <span>参与费用估算</span>
+                        <Switch
+                          aria-label="参与费用估算"
+                          checked={selected.costEstimationEnabled !== false}
+                          disabled={disabled}
+                          onCheckedChange={(enabled) =>
+                            onCostEstimation(selected, enabled)
+                          }
+                        />
+                      </label>
+                    </div>
                     <div className="mc-provider-operation">
                       <div>
                         <strong>模型目录</strong>

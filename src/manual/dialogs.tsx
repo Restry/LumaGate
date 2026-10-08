@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { ActionButton, Choice, Field, Modal } from "./ui";
 import { ProviderModelPicker } from "./ProviderModelPicker";
@@ -198,6 +199,16 @@ export function ProviderEditor({
               }
             />
             <Label htmlFor="provider-enabled">启用 Provider</Label>
+          </div>
+          <div className="mg-check-row mg-field--wide">
+            <Switch
+              id="provider-cost-estimation"
+              checked={draft.costEstimationEnabled !== false}
+              onCheckedChange={(value) =>
+                setDraft({ ...draft, costEstimationEnabled: value })
+              }
+            />
+            <Label htmlFor="provider-cost-estimation">参与费用估算</Label>
           </div>
         </fieldset>
       </form>

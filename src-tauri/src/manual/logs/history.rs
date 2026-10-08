@@ -2,7 +2,7 @@
 use rusqlite::{params, params_from_iter, types::Value as Sql, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 const SAFE: u128 = 9_007_199_254_740_991;
 const MAX_ROW: u64 = 9_007_199_254_740_991 / 200;
 
@@ -21,6 +21,9 @@ pub struct Query {
     pub page_size: u32,
     pub anchor: Option<u64>,
     pub grouping: String,
+    // Native-only policy snapshot. IPC arguments cannot override persisted participation.
+    #[serde(skip)]
+    pub(crate) cost_disabled_providers: HashSet<String>,
 }
 impl Default for Query {
     fn default() -> Self {
@@ -37,10 +40,19 @@ impl Default for Query {
             page_size: 50,
             anchor: None,
             grouping: "model".into(),
+            cost_disabled_providers: HashSet::new(),
         }
     }
 }
 impl Query {
+    pub fn apply_cost_settings(&mut self, document: &crate::manual::catalog::Document) {
+        self.cost_disabled_providers = document
+            .providers
+            .iter()
+            .filter(|source| !source.cost_estimation_enabled)
+            .map(|source| source.id.clone())
+            .collect();
+    }
     pub fn validate(&self) -> Result<(), String> {
         if self.page_size == 0 || self.page_size > 100 || self.page > 1_000_000 {
             return Err("分页参数无效".into());
@@ -281,6 +293,7 @@ fn project(id: u64, row: &Value) -> Meta {
         output: usage.as_ref().map(|u| u.output),
         read: usage.as_ref().and_then(|u| u.cache),
         write: count("cacheWriteTokens"),
+        provider: providers.last().cloned(),
     });
     Meta {
         id,
@@ -325,13 +338,13 @@ pub(super) fn initialize(conn: &mut Connection) -> rusqlite::Result<()> {
             |r| r.get(0),
         )
         .optional()?;
-    if version != Some(4) {
+    if version != Some(5) {
         tx.execute(
             "INSERT OR IGNORE INTO manual_log_dirty_v1 SELECT id FROM request_logs",
             [],
         )?;
         tx.execute(
-            "INSERT OR REPLACE INTO manual_log_projection_version VALUES(1,4)",
+            "INSERT OR REPLACE INTO manual_log_projection_version VALUES(1,5)",
             [],
         )?;
     }
@@ -531,7 +544,15 @@ fn query_inner(conn: &mut Connection, q: &Query) -> rusqlite::Result<Value> {
                 .map_err(|_| rusqlite::Error::InvalidQuery)?;
             matched += 1;
             if let Some(meter) = &m.meter {
-                cost.add(&catalog.catalog, meter);
+                if meter
+                    .provider
+                    .as_ref()
+                    .is_some_and(|(id, _)| q.cost_disabled_providers.contains(id))
+                {
+                    cost.exclude_provider(meter);
+                } else {
+                    cost.add(&catalog.catalog, meter);
+                }
             }
             match m.outcome.as_str() {
                 "success" => success += 1,

@@ -348,6 +348,7 @@ mod tests {
             copilot: None,
             protocol: Protocol::OpenaiResponses,
             enabled: true,
+            cost_estimation_enabled: true,
             models: vec![parse_model(value, true).unwrap()],
         };
         let mut doc = Document {

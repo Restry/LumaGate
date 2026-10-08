@@ -64,6 +64,7 @@ fn source(id: &str, base: &str) -> Source {
         key_ref: None,
         copilot: None,
         enabled: true,
+        cost_estimation_enabled: true,
         protocol: Protocol::OpenaiChat,
         models: vec![Model {
             id: "model-a".into(),

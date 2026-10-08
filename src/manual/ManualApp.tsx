@@ -447,6 +447,19 @@ export default function ManualApp({
                       };
                     })
                   }
+                  onCostEstimation={(source, enabled) =>
+                    void action(async () => {
+                      await invoke("manual_set_provider_cost_estimation", {
+                        providerId: source.id,
+                        enabled,
+                        revision: doc!.revision,
+                      });
+                      feedback(
+                        source.id,
+                        enabled ? "已参与费用估算" : "已关闭费用估算",
+                      );
+                    })
+                  }
                   copilotStatus={snapshot.copilotAuth}
                   onCopilotLogin={() => setCopilotLogin(true)}
                   onCopilotReset={() => setCopilotReset(true)}

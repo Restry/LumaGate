@@ -81,6 +81,7 @@ pub(super) async fn link(
         copilot: Some(binding),
         protocol: Protocol::OpenaiChat,
         enabled: old.as_ref().map(|p| p.enabled).unwrap_or(true),
+        cost_estimation_enabled: old.as_ref().is_none_or(|p| p.cost_estimation_enabled),
         models: old.map(|p| p.models).unwrap_or_default(),
     };
     doc.providers.retain(|p| p.id != PROVIDER_ID);

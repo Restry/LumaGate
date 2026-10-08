@@ -295,6 +295,8 @@ pub struct Meter {
     pub output: Option<u64>,
     pub read: Option<u64>,
     pub write: Option<u64>,
+    #[serde(default)]
+    pub provider: Option<(String, String)>,
 }
 #[derive(Default)]
 pub struct Estimate {
@@ -305,9 +307,14 @@ pub struct Estimate {
     model_assumptions: u64,
     input_assumptions: u64,
     excluded: u64,
-    missing: BTreeMap<(String, String), u64>,
+    opted_out: u64,
+    missing: BTreeMap<(String, String, String, String), u64>,
 }
 impl Estimate {
+    pub fn exclude_provider(&mut self, meter: &Meter) {
+        self.opted_out += 1;
+        self.missing(meter, "已关闭费用估算");
+    }
     pub fn add(&mut self, catalog: &Catalog, meter: &Meter) {
         // Historical request-model equivalent only when no final identity contradicts it.
         let model = meter
@@ -315,6 +322,17 @@ impl Estimate {
             .as_deref()
             .or(meter.requested.as_deref())
             .unwrap_or("");
+        // Native Copilot dispatch sends the bare ID and the logger adds this reserved
+        // namespace. Its stable provider ID survives deletion and legacy projections.
+        let model = if meter
+            .provider
+            .as_ref()
+            .is_some_and(|(id, _)| id == super::copilot::PROVIDER_ID)
+        {
+            model.strip_prefix("copilot/").unwrap_or(model)
+        } else {
+            model
+        };
         let Some(price) = catalog.models.get(model) else {
             self.excluded += 1;
             self.missing(
@@ -408,10 +426,25 @@ impl Estimate {
             .or(meter.requested.as_ref())
             .map(String::as_str)
             .unwrap_or("未识别模型");
+        let (provider_id, provider_name) = meter
+            .provider
+            .as_ref()
+            .map(|(id, name)| (id.as_str(), name.as_str()))
+            .unwrap_or(("", "未知来源"));
         let key = if self.missing.len() < 10_000 {
-            (model.into(), reason.into())
+            (
+                provider_id.into(),
+                provider_name.into(),
+                model.into(),
+                reason.into(),
+            )
         } else {
-            ("其他模型".into(), "缺口分组超过上限".into())
+            (
+                String::new(),
+                "其他来源".into(),
+                "其他模型".into(),
+                "缺口分组超过上限".into(),
+            )
         };
         *self.missing.entry(key).or_default() += 1;
     }
@@ -426,8 +459,8 @@ impl Estimate {
             .iter()
             .map(|(c, n)| (c, n.map(|v| v.normalize().to_string())))
             .collect();
-        let missing: Vec<_> = self.missing.iter().map(|((model,reason),requests)|json!({"model":model,"reason":reason,"requests":requests})).collect();
-        json!({"totals":totals,"parts":parts,"covered":self.covered,"estimated":self.estimated,"assumptions":{"model":self.model_assumptions,"input":self.input_assumptions},"excluded":self.excluded,"missing":missing,"catalog":status})
+        let missing: Vec<_> = self.missing.iter().map(|((provider_id,provider,model,reason),requests)|json!({"providerId":provider_id,"provider":provider,"model":model,"reason":reason,"requests":requests})).collect();
+        json!({"totals":totals,"parts":parts,"covered":self.covered,"estimated":self.estimated,"assumptions":{"model":self.model_assumptions,"input":self.input_assumptions},"excluded":self.excluded,"optedOut":self.opted_out,"missing":missing,"catalog":status})
     }
 }
 #[cfg(test)]

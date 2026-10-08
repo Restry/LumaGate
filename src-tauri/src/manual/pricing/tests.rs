@@ -7,6 +7,7 @@ fn meter() -> Meter {
         output: Some(200),
         read: Some(800),
         write: Some(0),
+        provider: None,
     }
 }
 #[test]

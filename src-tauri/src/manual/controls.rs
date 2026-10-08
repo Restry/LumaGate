@@ -88,3 +88,20 @@ pub fn set_blocked(doc: &mut Document, model_id: &str, blocked: bool) -> Result<
     *doc = candidate;
     Ok(())
 }
+
+pub fn set_cost_estimation(
+    doc: &mut Document,
+    provider_id: &str,
+    enabled: bool,
+    revision: u64,
+) -> Result<(), String> {
+    if doc.revision != revision {
+        return Err("配置已变化，请刷新后重试".into());
+    }
+    doc.providers
+        .iter_mut()
+        .find(|s| s.id == provider_id)
+        .ok_or("Provider 不存在")?
+        .cost_estimation_enabled = enabled;
+    Ok(())
+}

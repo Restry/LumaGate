@@ -90,6 +90,8 @@ pub struct Source {
     pub protocol: Protocol,
     #[serde(default = "yes")]
     pub enabled: bool,
+    #[serde(default = "yes")]
+    pub cost_estimation_enabled: bool,
     #[serde(default)]
     pub models: Vec<Model>,
 }
@@ -574,6 +576,7 @@ mod tests {
             copilot: None,
             protocol: Protocol::OpenaiChat,
             enabled: true,
+            cost_estimation_enabled: true,
             models: vec![Model {
                 id: "model-a".into(),
                 image: false,
@@ -583,6 +586,29 @@ mod tests {
                 ..Model::default()
             }],
         }
+    }
+    #[test]
+    fn legacy_provider_cost_participation_defaults_on_and_roundtrips_off() {
+        let db = Database::memory().unwrap();
+        let mut raw = serde_json::to_value(source("old-api")).unwrap();
+        raw.as_object_mut().unwrap().remove("costEstimationEnabled");
+        let parsed: Source = serde_json::from_value(raw.clone()).unwrap();
+        assert_eq!(
+            serde_json::to_value(&parsed).unwrap()["costEstimationEnabled"],
+            true
+        );
+        raw["costEstimationEnabled"] = json!(false);
+        let mut doc = Document {
+            providers: vec![serde_json::from_value(raw).unwrap()],
+            ..Document::default()
+        };
+        doc.save(&db).unwrap();
+        let restored = Document::load(&db).unwrap();
+        assert_eq!(
+            serde_json::to_value(&restored.providers[0]).unwrap()["costEstimationEnabled"],
+            false
+        );
+        assert!(restored.providers[0].enabled);
     }
     #[test]
     fn groups_exact_models_only() {

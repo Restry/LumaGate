@@ -15,6 +15,7 @@ fn source() -> Source {
         }),
         protocol: Protocol::OpenaiChat,
         enabled: true,
+        cost_estimation_enabled: true,
         models: parse_models(&json!({"data":[item("gpt-6",json!(["/responses"]))]})).unwrap(),
     }
 }

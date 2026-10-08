@@ -476,3 +476,126 @@ fn legacy_estimate_includes_input_and_respects_range_without_rewriting_history()
         .unwrap();
     assert_eq!(original, unchanged);
 }
+
+#[test]
+fn native_copilot_history_uses_exact_base_price_and_final_provider() {
+    let temp = tempfile::tempdir().unwrap();
+    let logs = RequestLogs::open(temp.path()).unwrap();
+    let mut row = entry(20, "gpt-6-astra");
+    row.effective_model = Some("copilot/gpt-4o-mini".into());
+    row.providers.last_mut().unwrap().id = crate::manual::copilot::PROVIDER_ID.into();
+    row.providers.last_mut().unwrap().name = "GitHub Copilot".into();
+    save(&logs, row);
+    let result = logs.query_history(&Query::default()).unwrap();
+    assert_eq!(result["cost"]["totals"]["USD"], "0.000021");
+    assert_eq!(result["cost"]["covered"], 1);
+    assert_eq!(result["analytics"]["total"], 120);
+}
+
+#[test]
+fn provider_cost_settings_recompute_history_without_changing_usage_or_raw_logs() {
+    use crate::manual::{catalog::Document, controls};
+    let temp = tempfile::tempdir().unwrap();
+    let logs = RequestLogs::open(temp.path()).unwrap();
+    let mut row = entry(20, "gpt-6-astra");
+    row.effective_model = Some("gpt-4o-mini".into());
+    save(&logs, row); // a failed, b finally served; b is deliberately routing-disabled now.
+    let db = crate::database::Database::memory().unwrap();
+    let mut doc: Document = serde_json::from_value(json!({"revision":0,"policies":{},"tests":{},"providers":[
+        {"id":"a","name":"First","baseUrl":"https://a.example","protocol":"openai_chat"},
+        {"id":"b","name":"Final","baseUrl":"https://b.example","protocol":"openai_chat","enabled":false}
+    ]})).unwrap();
+    doc.save(&db).unwrap();
+    let mut q = Query::default();
+    q.apply_cost_settings(&doc);
+    let original = logs.query_history(&q).unwrap();
+    assert_eq!(original["cost"]["totals"]["USD"], "0.000021");
+    let revision = doc.revision;
+    controls::set_cost_estimation(&mut doc, "a", false, revision).unwrap();
+    q.apply_cost_settings(&doc);
+    assert_eq!(logs.query_history(&q).unwrap()["cost"]["covered"], 1);
+    controls::set_cost_estimation(&mut doc, "b", false, revision).unwrap();
+    doc.save(&db).unwrap();
+    let mut restored = Document::load(&db).unwrap();
+    q.apply_cost_settings(&restored);
+    let excluded = logs.query_history(&q).unwrap();
+    assert_eq!(excluded["cost"]["totals"], json!({}));
+    assert_eq!(excluded["cost"]["optedOut"], 1);
+    assert_eq!(excluded["cost"]["excluded"], 0);
+    assert_eq!(excluded["cost"]["missing"][0]["providerId"], "b");
+    assert_eq!(excluded["cost"]["missing"][0]["reason"], "已关闭费用估算");
+    assert_eq!(excluded["analytics"], original["analytics"]);
+    assert_eq!(excluded["stats"], original["stats"]);
+    assert_eq!(excluded["rows"], original["rows"]);
+    let revision = restored.revision;
+    controls::set_cost_estimation(&mut restored, "b", true, revision).unwrap();
+    restored.save(&db).unwrap();
+    q.apply_cost_settings(&Document::load(&db).unwrap());
+    assert_eq!(
+        logs.query_history(&q).unwrap()["cost"]["totals"],
+        original["cost"]["totals"]
+    );
+    restored.providers.clear();
+    q.apply_cost_settings(&restored);
+    assert_eq!(
+        logs.query_history(&q).unwrap()["cost"]["totals"],
+        original["cost"]["totals"]
+    );
+    assert!(controls::set_cost_estimation(&mut doc, "a", true, revision - 1).is_err());
+}
+
+#[test]
+fn copilot_legacy_namespace_is_exact_and_never_borrows_requested_fallback_price() {
+    let temp = tempfile::tempdir().unwrap();
+    let logs = RequestLogs::open(temp.path()).unwrap();
+    for (provider, effective, requested) in [
+        ("copilot-personal", None, "copilot/gpt-4o-mini"),
+        ("copilot-personal", Some("copilot/unknown"), "gpt-4o-mini"),
+        ("ordinary", Some("copilot/gpt-4o-mini"), "gpt-4o-mini"),
+        (
+            "copilot-personal",
+            Some("github-copilot/gpt-4o-mini"),
+            "gpt-4o-mini",
+        ),
+    ] {
+        let mut row = entry(20, requested);
+        row.providers.last_mut().unwrap().id = provider.into();
+        row.effective_model = effective.map(str::to_owned);
+        save(&logs, row);
+    }
+    let result = logs.query_history(&Query::default()).unwrap();
+    assert_eq!(result["cost"]["totals"]["USD"], "0.000021");
+    assert_eq!(result["cost"]["covered"], 1);
+    assert_eq!(result["cost"]["excluded"], 3);
+    assert_eq!(result["analytics"]["total"], 480);
+}
+
+#[test]
+fn old_price_projection_recovers_provider_identity_without_rewriting_raw_records() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("requests.sqlite3");
+    let logs = RequestLogs::open(temp.path()).unwrap();
+    let mut row = entry(20, "copilot/gpt-4o-mini");
+    row.providers.last_mut().unwrap().id = crate::manual::copilot::PROVIDER_ID.into();
+    save(&logs, row);
+    logs.flush().unwrap();
+    drop(logs);
+    let conn = Connection::open(&path).unwrap();
+    let raw: String = conn
+        .query_row("SELECT record_json FROM request_logs", [], |r| r.get(0))
+        .unwrap();
+    conn.execute_batch("UPDATE manual_log_search_v1 SET meta=json_remove(meta,'$.meter.provider'); UPDATE manual_log_projection_version SET version=4;").unwrap();
+    drop(conn);
+    let logs = RequestLogs::open(temp.path()).unwrap();
+    assert_eq!(
+        logs.query_history(&Query::default()).unwrap()["cost"]["totals"]["USD"],
+        "0.000021"
+    );
+    let conn = Connection::open(&path).unwrap();
+    assert_eq!(
+        conn.query_row("SELECT record_json FROM request_logs", [], |r| r
+            .get::<_, String>(0))
+            .unwrap(),
+        raw
+    );
+}

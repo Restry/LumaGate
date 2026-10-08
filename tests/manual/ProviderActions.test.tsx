@@ -4,7 +4,10 @@ import { beforeEach, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import ManualApp from "@/manual/ManualApp";
 import type { Snapshot } from "@/manual/types";
-vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(), isTauri: () => false }));
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: vi.fn(),
+  isTauri: () => false,
+}));
 const rpc = vi.mocked(invoke);
 let data: Snapshot;
 beforeEach(() => {
@@ -46,6 +49,13 @@ beforeEach(() => {
       const update = args as { providerId: string; enabled: boolean };
       data.document.providers.find((p) => p.id === update.providerId)!.enabled =
         update.enabled;
+      data.document.revision++;
+    }
+    if (command === "manual_set_provider_cost_estimation") {
+      const update = args as { providerId: string; enabled: boolean };
+      data.document.providers.find(
+        (p) => p.id === update.providerId,
+      )!.costEstimationEnabled = update.enabled;
       data.document.revision++;
     }
   });
@@ -116,4 +126,59 @@ it("来源标题直接停用并恢复，保存模型和账号绑定，不打开�
   await user.click(toggle);
   await waitFor(() => expect(toggle).toBeChecked());
   expect(data.document.providers[0]).toEqual(original);
+});
+
+it("Copilot 的费用开关默认开启，停用路由后仍可独立保存且重载保留", async () => {
+  const user = userEvent.setup();
+  const original = structuredClone(data.document.providers[0]);
+  data.document.providers[0].enabled = false;
+  const view = render(<ManualApp initialWorkspace="providers" />);
+  const toggle = await screen.findByRole("switch", { name: "参与费用估算" });
+  expect(toggle).toBeChecked();
+  await user.click(toggle);
+  await waitFor(() => expect(toggle).not.toBeChecked());
+  expect(data.document.providers[0]).toEqual({
+    ...original,
+    enabled: false,
+    costEstimationEnabled: false,
+  });
+  view.unmount();
+  render(<ManualApp initialWorkspace="providers" />);
+  const restored = await screen.findByRole("switch", { name: "参与费用估算" });
+  expect(restored).not.toBeChecked();
+  await user.click(restored);
+  await waitFor(() => expect(restored).toBeChecked());
+  expect(
+    screen.getByRole("switch", { name: "启用来源 GitHub Copilot" }),
+  ).not.toBeChecked();
+});
+
+it("API Provider 新建默认计价，编辑关闭后显式保存", async () => {
+  const user = userEvent.setup();
+  const { ProviderEditor } = await import("@/manual/dialogs");
+  const { emptySource } = await import("@/manual/types");
+  const source = {
+    ...emptySource(),
+    name: "API fixture",
+    baseUrl: "https://api.example/v1",
+  };
+  const save = vi.fn();
+  render(
+    <ProviderEditor
+      source={source}
+      isNew
+      busy={false}
+      onClose={() => {}}
+      onSave={save}
+    />,
+  );
+  const toggle = screen.getByRole("switch", { name: "参与费用估算" });
+  expect(toggle).toBeChecked();
+  await user.click(toggle);
+  expect(save).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "保存，不同步" }));
+  expect(save.mock.calls[0][0]).toEqual({
+    ...source,
+    costEstimationEnabled: false,
+  });
 });

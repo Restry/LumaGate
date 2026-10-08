@@ -15,6 +15,7 @@ fn source(id: &str, model: Model) -> Source {
         copilot: None,
         protocol: Protocol::OpenaiChat,
         enabled: true,
+        cost_estimation_enabled: true,
         models: vec![model],
     }
 }

@@ -14,7 +14,14 @@ export interface DefaultCostData {
   estimated: number;
   assumptions: { model: number; input: number };
   excluded: number;
-  missing: { model: string; reason: string; requests: number }[];
+  optedOut: number;
+  missing: {
+    providerId: string;
+    provider: string;
+    model: string;
+    reason: string;
+    requests: number;
+  }[];
   catalog: {
     source: string;
     fetchedAt: string;
@@ -61,7 +68,7 @@ export function DefaultCost({
   return (
     <article className="mc-cost-metric" aria-label="预估费用">
       <div className="mc-metric-label">
-        <span>预估费用</span>
+        <span>{data && data.excluded > 0 ? "部分预估" : "预估费用"}</span>
         <Popover>
           <PopoverTrigger asChild>
             <ActionButton
@@ -104,6 +111,9 @@ export function DefaultCost({
                   {data.excluded > 0
                     ? ` · 未计入 ${data.excluded.toLocaleString()} 条`
                     : ""}
+                  {data.optedOut > 0
+                    ? ` · 已关闭 ${data.optedOut.toLocaleString()} 条`
+                    : ""}
                 </p>
                 {data.assumptions.input > 0 && (
                   <p>未记录的缓存拆分按普通输入价估算。</p>
@@ -120,8 +130,8 @@ export function DefaultCost({
                     <ul>
                       {data.missing.map((m, i) => (
                         <li key={i}>
-                          {m.model} · {m.reason} · {m.requests.toLocaleString()}{" "}
-                          条
+                          {m.provider} · {m.model} · {m.reason} ·{" "}
+                          {m.requests.toLocaleString()} 条
                         </li>
                       ))}
                     </ul>
@@ -167,17 +177,24 @@ export function DefaultCost({
       <p>
         {!data
           ? "等待读取"
-          : problem
-            ? "价格更新失败 · 使用缓存"
-            : unpriced > 0
-              ? `${unpriced} 个模型未定价`
-              : data.excluded > 0
-                ? `${data.excluded.toLocaleString()} 条用量不完整`
-                : data.estimated > 0
-                  ? "含估算"
-                  : data.covered > 0
-                    ? "默认单价"
-                    : "暂无用量"}
+          : [
+              unpriced > 0
+                ? `${unpriced} 个模型未定价`
+                : data.excluded > 0
+                  ? `${data.excluded.toLocaleString()} 条未计入`
+                  : "",
+              data.optedOut > 0
+                ? `${data.optedOut.toLocaleString()} 条已关闭`
+                : "",
+              problem ? "价格更新失败" : "",
+            ]
+              .filter(Boolean)
+              .join(" · ") ||
+            (data.estimated > 0
+              ? "含估算"
+              : data.covered > 0
+                ? "默认单价"
+                : "暂无用量")}
       </p>
     </article>
   );
