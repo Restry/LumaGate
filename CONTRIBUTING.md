@@ -16,7 +16,7 @@ pnpm test:manual
 
 ## 分支与发布
 
-- 仓库仅保留 `dev` 与 `release`；日常开发和 PR 目标为默认分支 `dev`。旧历史位于只读归档 `Restry/LumaGate-legacy`，不推送或重写该仓库。
+- 仓库仅保留 `dev` 与 `release`；日常开发和 PR 目标为默认分支 `dev`。
 - 合并前在本地完成上述检查和相关测试；推送 `dev` 和提交 PR 不运行自动 CI。维护者正常推进 `release`；GitHub Actions 仅保留版本保留、正式构建、产物校验与发布，不能 force push。
 - 修改版本时同步 `package.json`、`src-tauri/tauri.conf.json`、Cargo package 和 Cargo.lock 的 `lumagate` 条目。内部库继续叫 `cc_switch_lib`。
 - 运行 `python3.13 scripts/releasing/release.py check` 与 `python3.13 -m unittest discover -s scripts/releasing -p 'test_*.py' -v`。这些离线测试不代表真实发布成功。

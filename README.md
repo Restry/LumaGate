@@ -87,4 +87,4 @@ macOS 仅 ad-hoc 签名、未公证；Windows 未做 Authenticode 签名。完�
 
 LumaGate 基于 [CC Switch](https://github.com/farion1231/cc-switch) 的 MIT 代码发展而来，并非全部独立创作。保留 [LICENSE](LICENSE) 中 Jason Young 的原始版权；内部共享 Rust 库名 `cc_switch_lib`、仍参与编译的历史模块及协议兼容标识不作无意义改名。随应用分发的 Geist 字体授权见 `src/manual/assets/GEIST-LICENSE.txt`，第三方依赖遵循各自许可证。
 
-本仓库从当前产品代码建立全新历史。完整旧历史、旧手册和设计试验保留在只读归档 [LumaGate-legacy](https://github.com/Restry/LumaGate-legacy)，不再打包进当前源码。当前产品问题请提交到 Restry/LumaGate。
+当前产品问题请提交到 Restry/LumaGate。

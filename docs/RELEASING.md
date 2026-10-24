@@ -92,7 +92,7 @@ Vault 句柄为 `lumagate/TAURI_SIGNING_PRIVATE_KEY` 和 `lumagate/TAURI_SIGNING
 
 ## 权限与独立仓库
 
-当前仓库是从干净产品快照建立的独立历史，仅保留默认分支 `dev` 和发布分支 `release`。旧 fork 的所有历史保存在只读归档 [LumaGate-legacy](https://github.com/Restry/LumaGate-legacy)；不要向其推送、解除归档或删除历史。
+当前仓库仅保留默认分支 `dev` 和发布分支 `release`。
 
 维护者通过 SSH 推送。首次发布先推送 `dev` 并设置为默认分支，再将同一提交推送到 `release`。后续修改 workflow 也先更新默认 `dev`，再推进 `release`，避免标签/发布权限不识别新 workflow。
 

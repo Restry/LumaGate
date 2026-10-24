@@ -65,7 +65,7 @@ Tauri 2 / Rust / Axum / SQLite / React / TypeScript。界面运行在桌面 WebV
 
 ## Evidence on Hand
 
-继承的 CC Switch 上游基线为 dc0febe503a41b281c9a022ca4bf672b3515e3e9。历史验证记录保留在只读归档 [LumaGate-legacy](https://github.com/Restry/LumaGate-legacy)；其特定账号、线路与时点结果不代表当前服务可用性，也不构成模型质量、长期性能或全面兼容性承诺。
+继承的 CC Switch 上游基线为 dc0febe503a41b281c9a022ca4bf672b3515e3e9。其特定账号、线路与时点结果不代表当前服务可用性，也不构成模型质量、长期性能或全面兼容性承诺。
 
 ## Product Principles
 
