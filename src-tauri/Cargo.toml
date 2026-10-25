@@ -1,6 +1,6 @@
 [package]
 name = "lumagate"
-version = "3.24.11"
+version = "3.25.0"
 description = "LumaGate — local model gateway for Pi, Claude Code and Codex"
 authors = ["Restry", "LumaGate contributors"]
 license = "MIT"
@@ -112,7 +112,9 @@ objc2-app-kit = { version = "0.2", features = ["NSColor"] }
 
 # Optimize release binary size to help reduce AppImage footprint
 [profile.release]
-codegen-units = 1
+# 16 而不是 1：codegen-units = 1 让每个 crate 串行优化，是发布构建的主要耗时。
+# 16 仍保留 thin LTO 与体积优化，本地实测可把依赖编译时间压下来一档。
+codegen-units = 16
 lto = "thin"
 opt-level = "s"
 # 使用 unwind 以便 panic hook 能捕获 backtrace（abort 会直接终止无法捕获）

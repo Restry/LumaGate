@@ -28,24 +28,26 @@
 
 ## 必需资产：安装包、签名更新包与校验文件
 
-下表以 `VERSION` 表示分配后的版本。schema 3 从平台清单推导完整资产集合，目前为 **16 个上传资产**；不是硬编码数量门禁。GitHub 自动生成的源码 zip/tar 不计入。
+下表以 `VERSION` 表示分配后的版本。schema 4 从平台清单推导完整资产集合，目前为 **10 个上传资产**；不是硬编码数量门禁。GitHub 自动生成的源码 zip/tar 不计入。
 
 | Runner | Rust target | 必需文件 |
 | --- | --- | --- |
 | `macos-15` | `aarch64-apple-darwin` | `LumaGate-VERSION-macos-arm64.dmg`、`.app.tar.gz`、`.app.tar.gz.sig` |
-| `macos-15-intel` | `x86_64-apple-darwin` | `LumaGate-VERSION-macos-x64.dmg`、`.app.tar.gz`、`.app.tar.gz.sig` |
 | `windows-2022` | `x86_64-pc-windows-msvc` | `LumaGate-VERSION-windows-x64.exe`、`.exe.sig` |
 | `windows-2022`（交叉编译） | `aarch64-pc-windows-msvc` | `LumaGate-VERSION-windows-arm64.exe`、`.exe.sig` |
-| `ubuntu-22.04` | `x86_64-unknown-linux-gnu` | `LumaGate-VERSION-linux-x64.AppImage`、`.AppImage.sig`、`.deb` |
 | 汇总 | — | `latest.json`、`BUILD-INFO.json`、`SHA256SUMS` |
 
-使用 Tauri 配置及目标 bundle 目录发现产物，不硬编码旧 `cc-switch` 可执行文件名。每种格式必须恰好匹配一个文件，缺失、重复、跨 SHA/版本/平台混装、未知额外文件、空文件、摘要不符均阻止发布。macOS 检查 app 内版本、Mach-O 架构、结构性 codesign 验证及 DMG 校验；Windows 用 runner 预装的 7-Zip 解压 NSIS，检查其中主程序的 PE Machine（x64 `0x8664`、ARM64 `0xAA64`）、ProductVersion/ProductName，并核对其与构建主程序的摘要/大小一致；Linux 检查 deb 版本/架构和 AppImage ELF 架构。检查不会启动应用或接触用户数据。
+3.25 起只发 macOS arm64 与 Windows x64/arm64。去掉 macOS Intel 与 Linux，是因为 `macos-x64` 长期是整条流水线的墙钟瓶颈（30 分钟以上），而本产品不面向 Linux。schema 1–3 的五目标历史契约保留用于重验，不回收、不改写历史资产。
+
+使用 Tauri 配置及目标 bundle 目录发现产物，不硬编码旧 `cc-switch` 可执行文件名。每种格式必须恰好匹配一个文件，缺失、重复、跨 SHA/版本/平台混装、未知额外文件、空文件、摘要不符均阻止发布。macOS 检查 app 内版本、Mach-O 架构、结构性 codesign 验证及 DMG 校验；Windows 用 runner 预装的 7-Zip 解压 NSIS，检查其中主程序的 PE Machine（x64 `0x8664`、ARM64 `0xAA64`）、ProductVersion/ProductName，并核对其与构建主程序的摘要/大小一致。检查不会启动应用或接触用户数据。
 
 macOS 必须保留 `app,dmg` 构建参数，供 Tauri 同时生成 `.app.tar.gz` 和 `.sig`，并验证 `.app` 的版本、架构与 ad-hoc 签名；不要恢复仅构建 dmg 的旧错误。
 
+编译产物缓存只用于复用依赖编译，不复用安装包。缓存恢复后必须先删除所有 `bundle` 目录再编译，确保每个安装包都是本次构建产出的；否则同版本重跑可能把上一次的安装包当成新产物发布。
+
 原始输出只上传本次 workflow 的平台 artifact。汇总不合并同名目录，先检查每个平台自己的 `build.json`，再生成所有安装包及 `BUILD-INFO.json` 的 `SHA256SUMS`（不包含自身）。上传草稿后再次检查 GitHub 返回的完整资产名称、推导数量、大小、上传状态及 SHA256 digest，最后才将 `draft=false`、`prerelease=false`。任何必需平台失败都不能发布残缺版本。
 
-新 `BUILD-INFO.json` 使用 `schema: 3`，保留五目标及 Windows 解包回执，并记录更新公钥指纹。无 schema 的原契约仅适用于 `3.24.2` 及以前；schema 2 仅适用于 `3.24.6` 及以前。历史公共资产与标签不重写。每个平台在 stage 时验证真实 minisign 签名，汇总再次验签后生成静态 `latest.json`；其中 signature 为 `.sig` 的完整内容，URL 为最终公开资产路径。目标键为 darwin-aarch64/x86_64、windows-aarch64/x86_64、linux-x86_64。
+新 `BUILD-INFO.json` 使用 `schema: 4`，保留三目标及 Windows 解包回执，并记录更新公钥指纹。无 schema 的原契约仅适用于 `3.24.2` 及以前；schema 2 仅适用于 `3.24.6` 及以前；schema 3 为五目标签名更新包契约，适用于 `3.24.7`–`3.24.12`。历史公共资产与标签不重写。每个平台在 stage 时验证真实 minisign 签名，汇总再次验签后生成静态 `latest.json`；其中 signature 为 `.sig` 的完整内容，URL 为最终公开资产路径。目标键为 darwin-aarch64、windows-aarch64/x86_64。
 
 Windows ARM64 使用已有 `windows-2022` 上的 `Microsoft.VisualStudio.Component.VC.Tools.ARM64` 与 `rustup target add aarch64-pc-windows-msvc`。正式编译前用同目标编译/链接一个最小 Rust 程序，尽早暴露工具链问题。Rust 与 Tauri 官方支持 Windows 主机跨架构编译；不依赖本地 VM。GitHub 也提供 `windows-11-arm`，本流程为复用已验证的 Node/Corepack/VS2022 环境而不切换 runner。
 
@@ -74,9 +76,9 @@ gh run watch RUN_ID --repo Restry/LumaGate --exit-status
 
 Windows 安装器未做 Authenticode 签名，可能显示未知发布者或 SmartScreen 提示；不要自动绕过系统安全策略。ARM64 包用于 Windows ARM64，不是 ARM32 或改名的 x64 程序；NSIS 安装器外壳可能仍是 x86，原生架构以解压主程序为准。Windows 需要 WebView2 runtime；保持 Tauri 默认 `downloadBootstrapper`，缺失时联网下载并执行 Microsoft Evergreen bootstrapper，由其选择与设备架构一致的运行时（ARM64 设备使用 ARM64）。未内嵌离线运行时，不承诺无网络首次安装；Windows 11 通常自带 WebView2，但仍须处理缺失情况。云端交叉编译/解包校验不是 Windows ARM64 安装或运行 smoke。
 
-Linux 以 Ubuntu 22.04 为构建基线，不保证兼容更旧 glibc。AppImage 需执行权限，并可能需要系统 FUSE 支持；deb 需要发行版提供 WebKitGTK 4.1 等依赖。
+3.25 起不再构建 Linux 包。历史 3.24.x 的 AppImage/deb 仍可下载，但没有后续更新；`latest.json` 不再包含 `linux-x86_64` 目标。
 
-只使用 `https://github.com/Restry/LumaGate/releases/latest/download/latest.json`；无上游 CC Switch 或测试端点。`createUpdaterArtifacts: true`，公钥固定在客户端。全部平台与验签完成前始终保持 draft；最后只公开一次。不得上传私钥、用户数据、Vault 主身份或绕过 HTTPS/验签。Linux 应用内安装仅支持 AppImage，deb 明确走包管理器/手动升级。
+只使用 `https://github.com/Restry/LumaGate/releases/latest/download/latest.json`；无上游 CC Switch 或测试端点。`createUpdaterArtifacts: true`，公钥固定在客户端。全部平台与验签完成前始终保持 draft；最后只公开一次。不得上传私钥、用户数据、Vault 主身份或绕过 HTTPS/验签。
 
 ### 更新密钥保管
 
@@ -117,7 +119,7 @@ gh release download TAG --repo Restry/LumaGate --dir /tmp/lumagate-verified-down
 python3.13 scripts/releasing/release.py verify --version VERSION --sha SOURCE_SHA --input /tmp/lumagate-verified-downloads
 ```
 
-annotated tag 的 ref 指向 tag object，继续 GET `/git/tags/OBJECT_SHA` 核对 `object.sha == SOURCE_SHA`。清单要求的资产必须全部下载并校验。Windows ARM64 安装器还需使用 `7z x`（macOS 可用 `7zz x`）解包，将其中主程序的 PE Machine `0xAA64`、大小、SHA-256 与 BUILD-INFO 回执核对，不能只检查安装器外壳。在 Mac 可使用 `hdiutil imageinfo` 和 `hdiutil verify` 检查 DMG，无需安装或替换运行中的应用。未在对应系统安装时，不声称 Windows/Linux 安装或运行已经验证。
+annotated tag 的 ref 指向 tag object，继续 GET `/git/tags/OBJECT_SHA` 核对 `object.sha == SOURCE_SHA`。清单要求的资产必须全部下载并校验。Windows ARM64 安装器还需使用 `7z x`（macOS 可用 `7zz x`）解包，将其中主程序的 PE Machine `0xAA64`、大小、SHA-256 与 BUILD-INFO 回执核对，不能只检查安装器外壳。在 Mac 可使用 `hdiutil imageinfo` 和 `hdiutil verify` 检查 DMG，无需安装或替换运行中的应用。未在对应系统安装时，不声称 Windows 安装或运行已经验证。
 
 默认 token 权限为 read。仅 reserve（创建 annotated tag/ref）和 publish（草稿及资产）job 请求 `contents: write`；编译与依赖安装不写仓库。无 `secrets: inherit` 或 `pull_request_target`，checkout 不持久化凭据。缓存仅保存依赖下载，不含 target、安装器或本机状态。任何必需构建失败均阻止发布，不忽略失败、不上传模拟文件。
 

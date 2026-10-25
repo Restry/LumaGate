@@ -32,6 +32,8 @@ LEGACY_PLATFORMS = {
         },
     ),
 }
+# 更新包命名元数据。历史 schema 仍要能校验五目标，所以不裁剪这张表；
+# 实际构建/校验哪些平台由下面的平台集决定。
 UPDATER_TARGETS = {
     "macos-arm64": ("darwin-aarch64", "app.tar.gz", "macos/*.app.tar.gz"),
     "macos-x64": ("darwin-x86_64", "app.tar.gz", "macos/*.app.tar.gz"),
@@ -39,15 +41,42 @@ UPDATER_TARGETS = {
     "windows-arm64": ("windows-aarch64", "exe", "nsis/*.exe"),
     "linux-x64": ("linux-x86_64", "AppImage", "appimage/*.AppImage"),
 }
-PLATFORMS = {
-    platform: (target, {**patterns, UPDATER_TARGETS[platform][1]: UPDATER_TARGETS[platform][2],
-                       UPDATER_TARGETS[platform][1] + ".sig": UPDATER_TARGETS[platform][2] + ".sig"})
-    for platform, (target, patterns) in LEGACY_PLATFORMS.items()
+
+
+def with_signed_updater(platforms):
+    """给平台清单挂上签名更新包与 .sig 两种产物。"""
+    return {
+        platform: (
+            target,
+            {
+                **patterns,
+                UPDATER_TARGETS[platform][1]: UPDATER_TARGETS[platform][2],
+                UPDATER_TARGETS[platform][1] + ".sig": UPDATER_TARGETS[platform][2] + ".sig",
+            },
+        )
+        for platform, (target, patterns) in platforms.items()
+    }
+
+
+def updater_artifacts(platforms):
+    """某个平台集的更新包元数据；用于 latest.json 与 .sig 校验。"""
+    return {p: UPDATER_TARGETS[p] for p in platforms}
+
+
+# schema 3（3.24.7–3.24.12）：五目标，含签名更新包。只用于校验历史发布。
+SCHEMA3_PLATFORMS = with_signed_updater(LEGACY_PLATFORMS)
+# schema 4（3.25 起）：只发 macOS arm64 与 Windows x64/arm64。
+# 去掉 macOS Intel 与 Linux，让发布墙钟不再被 macos-x64 的 30 分钟拖住。
+SHIPPED_PLATFORMS = {
+    "macos-arm64": LEGACY_PLATFORMS["macos-arm64"],
+    "windows-x64": LEGACY_PLATFORMS["windows-x64"],
+    "windows-arm64": LEGACY_PLATFORMS["windows-arm64"],
 }
+PLATFORMS = with_signed_updater(SHIPPED_PLATFORMS)
 ENDPOINT = f"https://github.com/{REPOSITORY}/releases/latest/download/latest.json"
 PUBLIC_KEY = json.loads((Path(__file__).resolve().parents[2] / "src-tauri/tauri.conf.json").read_text())["plugins"]["updater"]["pubkey"]
 WINDOWS_MACHINES = {"windows-x64": 0x8664, "windows-arm64": 0xAA64}
-INVENTORY_SCHEMA = 3
+INVENTORY_SCHEMA = 4
 
 
 def inventory_platforms(info, version):
@@ -62,6 +91,9 @@ def inventory_platforms(info, version):
     if schema == 2:
         require(semver(version) <= (3, 24, 6), "New releases require signed updater artifacts")
         return LEGACY_PLATFORMS
+    if schema == 3:
+        # 历史五目标发布；重跑仍按当时的平台集校验，不按当前的三目标。
+        return SCHEMA3_PLATFORMS
     require(schema == INVENTORY_SCHEMA, "Unsupported release inventory schema")
     return PLATFORMS
 
@@ -425,7 +457,7 @@ def assemble(source, output, version, sha):
     for path in sources:
         shutil.copyfile(path, output / path.name)
     latest = {"version": version, "notes": update_notes(), "pub_date": datetime.now(timezone.utc).isoformat(), "platforms": {}}
-    for platform, (target, extension, _) in UPDATER_TARGETS.items():
+    for platform, (target, extension, _) in updater_artifacts(PLATFORMS).items():
         asset = output / f"LumaGate-{version}-{platform}.{extension}"
         signature = Path(str(asset) + ".sig").read_text().strip()
         verify_signature(asset, signature, PUBLIC_KEY)
@@ -455,13 +487,15 @@ def validate_assets(directory, version, sha):
     info = read_json(directory / "BUILD-INFO.json")
     platforms = inventory_platforms(info, version)
     expected = set().union(*(names(version, p, platforms) for p in platforms)) | {"BUILD-INFO.json", "SHA256SUMS"}
-    if info.get("schema") == INVENTORY_SCHEMA:
+    if info.get("schema", 1) >= 3:
+        # schema 3 与 4 都发 latest.json；按各自当时的平台集校验目标键。
+        artifacts = updater_artifacts(platforms)
         expected.add("latest.json")
         latest = read_json(directory / "latest.json")
-        require(latest["version"] == version and set(latest["platforms"]) == {t[0] for t in UPDATER_TARGETS.values()}, "Updater manifest version/targets mismatch")
+        require(latest["version"] == version and set(latest["platforms"]) == {t[0] for t in artifacts.values()}, "Updater manifest version/targets mismatch")
         require(bool(latest.get("notes")) and datetime.fromisoformat(latest["pub_date"]).tzinfo is not None, "Updater notes/date missing")
         require(info.get("updater_public_key_sha256") == hashlib.sha256(PUBLIC_KEY.encode()).hexdigest(), "Updater key provenance mismatch")
-        for platform, (target, extension, _) in UPDATER_TARGETS.items():
+        for platform, (target, extension, _) in artifacts.items():
             asset = directory / f"LumaGate-{version}-{platform}.{extension}"
             entry = latest["platforms"][target]
             signature = Path(str(asset) + ".sig").read_text().strip()
@@ -487,7 +521,7 @@ def validate_assets(directory, version, sha):
         platform = build["platform"]
         require(
             (build["sha"], build["version"], build["target"])
-            == (sha, version, PLATFORMS[platform][0])
+            == (sha, version, platforms[platform][0])
             and sorted(build["assets"], key=lambda asset: asset["name"])
             == [by_name[name] for name in sorted(names(version, platform, platforms))],
             f"Release platform provenance mismatch: {platform}",

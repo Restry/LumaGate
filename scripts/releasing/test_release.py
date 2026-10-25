@@ -53,14 +53,16 @@ def fixture(root, name="lumagate"):
     )
 
 
-def artifacts(root, version=VERSION, sha=SHA):
+def artifacts(root, version=VERSION, sha=SHA, platforms=None):
+    """生成平台产物夹具。platforms 决定目标集与资产命名，可用来造历史 schema 形态。"""
+    platforms = platforms or release.PLATFORMS
     source = root / "artifacts"
     source.mkdir()
-    for platform, (target, _) in release.PLATFORMS.items():
+    for platform, (target, _) in platforms.items():
         directory = source / f"installers-{platform}"
         directory.mkdir()
         records = []
-        for name in sorted(release.names(version, platform)):
+        for name in sorted(release.names(version, platform, platforms)):
             path = directory / name
             if name.endswith(".sig"):
                 path.write_text(sign_fixture(directory.joinpath(name[:-4]).read_bytes()))
@@ -254,7 +256,7 @@ class AssetsAndPublication(unittest.TestCase):
         self.assertIn(
             f"LumaGate-{VERSION}-windows-arm64.exe", {r["name"] for r in records}
         )
-        path = self.output / f"LumaGate-{VERSION}-linux-x64.deb"
+        path = self.output / f"LumaGate-{VERSION}-macos-arm64.dmg"
         path.write_bytes(b"corrupted")
         with self.assertRaises(ValueError):
             release.validate_assets(self.output, VERSION, SHA)
@@ -267,7 +269,7 @@ class AssetsAndPublication(unittest.TestCase):
         self.assertEqual(self.api.releases, [])
 
     def test_mixed_source_and_unknown_assets_rejected(self):
-        directory = self.source / "installers-linux-x64"
+        directory = self.source / "installers-macos-arm64"
         build = release.read_json(directory / "build.json")
         build["sha"] = OTHER
         release.write_json(directory / "build.json", build)
@@ -348,25 +350,36 @@ class AssetsAndPublication(unittest.TestCase):
             self.assemble()
 
     def test_historical_inventory_verifies_without_rewriting_assets(self):
-        self.assemble()
-        info_path = self.output / "BUILD-INFO.json"
-        info = release.read_json(info_path)
-        del info["schema"]
-        info["platforms"] = [
-            p for p in info["platforms"] if p["platform"] != "windows-arm64"
-        ]
-        for build in info["platforms"]:
+        # schema 1 形态：四目标、只有安装包、无签名更新包、BUILD-INFO 无 schema 字段。
+        # 历史公共资产不可变；重验只能读，不能改写任何字节。
+        historical = {
+            p: spec for p, spec in release.LEGACY_PLATFORMS.items() if p != "windows-arm64"
+        }
+        stage_root = self.root / "historical"
+        stage_root.mkdir()
+        source = artifacts(stage_root, platforms=historical)
+        self.output.mkdir()
+        builds = []
+        for platform, (target, _) in historical.items():
+            directory = source / f"installers-{platform}"
+            build = release.read_json(directory / "build.json")
             build.pop("windows_payload", None)
-            build["assets"] = [a for a in build["assets"] if a["name"] in release.names(VERSION, build["platform"], release.LEGACY_PLATFORMS)]
-        release.write_json(info_path, info)
-        expected = set().union(*(release.names(VERSION, p, release.LEGACY_PLATFORMS) for p in release.LEGACY_PLATFORMS if p != "windows-arm64")) | {"BUILD-INFO.json", "SHA256SUMS"}
-        for path in self.output.iterdir():
-            if path.name not in expected:
-                path.unlink()
+            builds.append(build)
+            for name in sorted(release.names(VERSION, platform, historical)):
+                release.shutil.copyfile(directory / name, self.output / name)
+        info = {
+            "repository": release.REPOSITORY,
+            "source": SHA,
+            "version": VERSION,
+            "tag": release.PREFIX + VERSION,
+            "platforms": builds,
+        }
+        release.write_json(self.output / "BUILD-INFO.json", info)
+        expected = set().union(
+            *(release.names(VERSION, p, historical) for p in historical)
+        ) | {"BUILD-INFO.json", "SHA256SUMS"}
         records = [
-            release.file_record(p)
-            for p in sorted(self.output.iterdir())
-            if p.name != "SHA256SUMS"
+            release.file_record(self.output / name) for name in sorted(expected) if name != "SHA256SUMS"
         ]
         (self.output / "SHA256SUMS").write_text(
             "".join(f"{r['sha256']}  {r['name']}\n" for r in records)

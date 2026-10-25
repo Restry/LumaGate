@@ -1,5 +1,18 @@
 # LumaGate 变更记录
 
+## Codex 一键接入
+
+- 客户端页点「预览同步」再确认，即可写入 `cc_switch_manual` profile、模型目录与网关 Provider。不需要手改 `~/.codex/config.toml`。
+- 若已有别的工具管理 `model_catalog_json`，不再拒绝同步。预览会点名被改写的原目录，由用户在确认框里决定是否覆盖。旧配置写入前备份成 `.bak`，可还原。
+- 接入后点「启动 Codex」自动带 `codex --profile cc_switch_manual` 走网关。profile 未写入时仍只启动 `codex`，不报未知 profile。Pi 与 Claude 的连接写在各自配置里，启动命令不变。
+
+## 发布目标缩减与构建提速
+
+- 3.25 起只发 macOS arm64 与 Windows x64/arm64，共 10 个上传资产。不再发 macOS Intel 与 Linux。历史 3.24.x 的五目标资产与标签保留不改写，仍可下载，但不再有后续更新；`latest.json` 不含 `linux-x86_64` 目标。
+- `macos-x64` 长期是发布墙钟瓶颈（30 分钟以上），整条流水线被它卡住。去掉后发布从约 32 分钟降到约 20 分钟。
+- `codegen-units` 从 1 提到 16。`codegen-units = 1` 让每个 crate 串行优化，是编译耗时的主要来源；16 仍保留 thin LTO 与体积优化。
+- 编译产物缓存只复用依赖编译，不复用安装包。缓存恢复后先删除所有 `bundle` 目录再编译，避免同版本重跑把上一次的安装包当新产物发布。
+
 ## Azure AD 应用注册鉴权
 
 - Provider 新增 Azure AD 应用注册鉴权（Client Credentials）。填租户 ID、客户端 ID 与 client_secret；请求时先换访问令牌，不直接把密钥发给上游。密钥保存在本机私有目录，界面不回显，不写入 Agent 配置。
