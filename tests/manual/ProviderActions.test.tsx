@@ -176,7 +176,7 @@ it("API Provider 新建默认计价，编辑关闭后显式保存", async () => 
   expect(toggle).toBeChecked();
   await user.click(toggle);
   expect(save).not.toHaveBeenCalled();
-  await user.click(screen.getByRole("button", { name: "保存，不同步" }));
+  await user.click(screen.getByRole("button", { name: "保存" }));
   expect(save.mock.calls[0][0]).toEqual({
     ...source,
     costEstimationEnabled: false,

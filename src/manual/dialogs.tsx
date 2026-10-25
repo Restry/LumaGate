@@ -7,6 +7,7 @@ import { ActionButton, Choice, Field, Modal } from "./ui";
 import { ProviderModelPicker } from "./ProviderModelPicker";
 import {
   compatible,
+  isAzureAd,
   keyUpdateFor,
   protocolPaths,
   type Source,
@@ -34,6 +35,17 @@ export function ProviderEditor({
   const [secret, setSecret] = useState("");
   const [useEnv, setUseEnv] = useState(!!source.keyEnv && !source.keyRef);
   const [remove, setRemove] = useState(false);
+  const [authMode, setAuthMode] = useState<"api_key" | "azure_ad">(
+    isAzureAd(source) ? "azure_ad" : "api_key",
+  );
+  function switchAuthMode(next: "api_key" | "azure_ad") {
+    setAuthMode(next);
+    setDraft((current) =>
+      next === "azure_ad"
+        ? { ...current, azureTenantId: "", azureClientId: "" }
+        : { ...current, azureTenantId: null, azureClientId: null },
+    );
+  }
   return (
     <Modal
       title={isNew ? "添加 Provider" : "编辑 Provider"}
@@ -51,7 +63,7 @@ export function ProviderEditor({
             variant={isNew ? "outline" : "default"}
             disabled={busy}
           >
-            保存，不同步
+            保存
           </ActionButton>
           {isNew && (
             <ActionButton
@@ -106,6 +118,57 @@ export function ProviderEditor({
               }
             />
           </Field>
+          <Field
+            id="provider-auth-mode"
+            label="鉴权方式"
+            hint="Azure Foundry 用应用注册的 Client Credentials；普通服务用 API Key。"
+          >
+            <Choice
+              id="provider-auth-mode"
+              value={authMode}
+              onChange={(value) =>
+                switchAuthMode(value as "api_key" | "azure_ad")
+              }
+              options={[
+                { value: "api_key", label: "API Key" },
+                { value: "azure_ad", label: "Azure AD 应用注册" },
+              ]}
+            />
+          </Field>
+          {authMode === "azure_ad" && (
+            <>
+              <Field
+                id="provider-azure-tenant"
+                label="租户 ID"
+                hint="Azure 门户 → 应用注册 → 目录(租户) ID。"
+              >
+                <Input
+                  id="provider-azure-tenant"
+                  required
+                  placeholder="00000000-0000-0000-0000-000000000000"
+                  value={draft.azureTenantId ?? ""}
+                  onChange={(event) =>
+                    setDraft({ ...draft, azureTenantId: event.target.value })
+                  }
+                />
+              </Field>
+              <Field
+                id="provider-azure-client"
+                label="客户端 ID"
+                hint="Azure 门户 → 应用注册 → 应用程序(客户端) ID。"
+              >
+                <Input
+                  id="provider-azure-client"
+                  required
+                  placeholder="00000000-0000-0000-0000-000000000000"
+                  value={draft.azureClientId ?? ""}
+                  onChange={(event) =>
+                    setDraft({ ...draft, azureClientId: event.target.value })
+                  }
+                />
+              </Field>
+            </>
+          )}
           {useEnv ? (
             <Field
               wide
@@ -126,7 +189,7 @@ export function ProviderEditor({
             <Field
               wide
               id="provider-api-key"
-              label="API Key"
+              label={authMode === "azure_ad" ? "客户端密钥" : "API Key"}
               hint="明文保存在 ~/.lumagate/keys/，不使用钥匙串，不同步给 Agent。无需密钥的本地服务可留空。"
             >
               <Input
@@ -136,7 +199,11 @@ export function ProviderEditor({
                 maxLength={8192}
                 disabled={remove}
                 placeholder={
-                  source.keyRef ? "已保存，留空保留原密钥" : "直接粘贴 API Key"
+                  source.keyRef
+                    ? "已保存，留空保留原密钥"
+                    : authMode === "azure_ad"
+                      ? "粘贴应用注册的 client_secret"
+                      : "直接粘贴 API Key"
                 }
                 value={secret}
                 onChange={(event) => setSecret(event.target.value)}

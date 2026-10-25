@@ -1171,6 +1171,16 @@ pub fn run() {
                 log::info!("✓ XaiOAuthManager initialized");
             }
 
+            // 初始化 Azure AD OAuth Manager (Azure Foundry / Azure OpenAI)
+            {
+                use commands::AzureAdState;
+
+                let client = reqwest::Client::new();
+                let manager = commands::azure_ad::new_manager(client);
+                app.manage(AzureAdState(manager));
+                log::info!("✓ AzureAdManager initialized");
+            }
+
             // 初始化全局出站代理 HTTP 客户端
             {
                 let db = &app.state::<AppState>().db;

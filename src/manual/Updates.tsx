@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { Switch } from "@/components/ui/switch";
-import { ActionButton, Modal } from "./ui";
+import { ActionButton } from "./ui";
 import "./updates.css";
 
 type Phase =
@@ -86,8 +86,8 @@ export function Updates({ settingsVisible }: { settingsVisible: boolean }) {
   }
   const busy = view ? busyPhase(view.phase) : false;
   const canInstall = view?.version && !busy && view.phase !== "unsupported";
-  const later = () => void command("manual_update_later");
   const install = () => void command("manual_update_install");
+  const later = () => void command("manual_update_later");
   const progress =
     view &&
     (view.phase === "downloading" ||
@@ -111,6 +111,13 @@ export function Updates({ settingsVisible }: { settingsVisible: boolean }) {
       </div>
     ) : (
       <p role="status">{view?.message}</p>
+    );
+  const cancelUpdate =
+    view &&
+    (view.phase === "downloading" || view.phase === "waiting") && (
+      <ActionButton variant="outline" size="sm" onClick={later}>
+        {view.phase === "waiting" ? "取消更新，继续服务" : "取消下载"}
+      </ActionButton>
     );
   return (
     <>
@@ -148,6 +155,7 @@ export function Updates({ settingsVisible }: { settingsVisible: boolean }) {
           />
         </div>
         {progress}
+        {cancelUpdate}
         {error && (
           <p role="alert" className="mg-network-error">
             {error}
@@ -170,58 +178,50 @@ export function Updates({ settingsVisible }: { settingsVisible: boolean }) {
           Linux 应用内安装仅支持 AppImage；deb 请使用包管理器或官方安装包升级。
         </p>
       </section>
-      {view?.prompt && (
-        <Modal
-          title={`更新至 LumaGate ${view.version ?? ""}`}
-          description={`当前版本 ${view.currentVersion}。确认后自动下载并验签，等待现有请求结束后安装重启。`}
-          busy={view.phase === "installing"}
-          onClose={later}
-          footer={
-            <>
-              <ActionButton
-                variant="outline"
-                disabled={view.phase === "installing"}
-                onClick={later}
-              >
-                {view.phase === "waiting"
-                  ? "取消更新，继续服务"
-                  : view.phase === "downloading"
-                    ? "取消下载"
-                    : "稍后"}
-              </ActionButton>
-              <ActionButton disabled={!canInstall || pending} onClick={install}>
-                {view.phase === "ready"
-                  ? "安装并重启"
-                  : view.phase === "error"
-                    ? "重试更新"
-                    : busy
-                      ? "更新处理中…"
-                      : "下载并更新"}
-              </ActionButton>
-            </>
-          }
-        >
-          {progress}
-          {error && (
-            <p role="alert" className="mg-network-error">
-              {error}
-            </p>
-          )}
-          {view.notes && (
-            <details
-              className="mg-update-notes"
-              open={view.phase === "available"}
-            >
-              <summary>更新说明</summary>
-              <pre>{view.notes}</pre>
-            </details>
-          )}
-          <p>
-            排空期间新请求返回可重试的
-            503；可取消恢复接收请求。不会中断正在生成的回答。
-          </p>
-        </Modal>
-      )}
     </>
+  );
+}
+
+export function UpdateBanner({
+  view,
+  onInstall,
+  onDismiss,
+}: {
+  view: UpdateView;
+  onInstall: () => void;
+  onDismiss: () => void;
+}) {
+  const busy = busyPhase(view.phase);
+  const canInstall = view.version && !busy && view.phase !== "unsupported";
+  return (
+    <div className="mg-update-banner" role="status">
+      <span className="mg-update-banner-dot" aria-hidden />
+      <div className="mg-update-banner-text">
+        <strong>发现新版本 {view.version}</strong>
+        <span>
+          当前 {view.currentVersion}
+          {busy ? ` · ${view.message}` : ""}
+        </span>
+      </div>
+      <ActionButton
+        size="sm"
+        disabled={!canInstall}
+        onClick={onInstall}
+      >
+        {view.phase === "ready"
+          ? "安装并重启"
+          : busy
+            ? "处理中…"
+            : "下载并更新"}
+      </ActionButton>
+      <ActionButton
+        variant="ghost"
+        size="icon"
+        aria-label="关闭更新提示"
+        onClick={onDismiss}
+      >
+        ×
+      </ActionButton>
+    </div>
   );
 }

@@ -75,6 +75,22 @@ impl Provider {
         self.provider_type() == Some("xai_oauth")
     }
 
+    /// Whether this provider uses Azure AD Client Credentials authentication.
+    /// Detected by the presence of azureTenantId + azureClientId in settings_config.
+    pub fn is_azure_ad(&self) -> bool {
+        self.settings_config
+            .get("azureTenantId")
+            .and_then(|v| v.as_str())
+            .map(|s| !s.is_empty())
+            .unwrap_or(false)
+            && self
+                .settings_config
+                .get("azureClientId")
+                .and_then(|v| v.as_str())
+                .map(|s| !s.is_empty())
+                .unwrap_or(false)
+    }
+
     pub fn is_github_copilot(&self) -> bool {
         self.provider_type() == Some("github_copilot")
             || self.claude_base_url_contains("githubcopilot.com")

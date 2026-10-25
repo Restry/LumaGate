@@ -1024,6 +1024,15 @@ impl ProviderAdapter for CodexAdapter {
             ));
         }
 
+        // Azure AD OAuth (Azure Foundry / Azure OpenAI): placeholder credentials;
+        // the real access_token is resolved per-request via Client Credentials flow.
+        if provider.is_azure_ad() {
+            return Some(AuthInfo::new(
+                "azure_ad_placeholder".to_string(),
+                AuthStrategy::AzureAD,
+            ));
+        }
+
         // Anthropic upstream: the auth field is chosen by the user in the UI (meta.apiKeyField).
         //   ANTHROPIC_API_KEY    → x-api-key (AuthStrategy::Anthropic)
         //   ANTHROPIC_AUTH_TOKEN → Authorization: Bearer (default, AuthStrategy::Bearer)

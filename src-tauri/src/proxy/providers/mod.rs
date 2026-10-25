@@ -12,6 +12,7 @@
 //! - `transform`: 格式转换
 
 mod adapter;
+pub mod azure_ad_auth;
 mod auth;
 mod claude;
 mod codex;

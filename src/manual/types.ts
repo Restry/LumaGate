@@ -26,11 +26,23 @@ export interface Source {
   baseUrl: string;
   keyEnv: string;
   keyRef?: string | null;
+  /** Azure AD 应用注册租户 ID；有值时走 Client Credentials */
+  azureTenantId?: string | null;
+  /** Azure AD 应用注册客户端 ID */
+  azureClientId?: string | null;
   copilot?: { accountId: string; grantId: string } | null;
   protocol: Protocol;
   enabled: boolean;
   costEstimationEnabled?: boolean;
   models: Model[];
+}
+
+/** Azure AD Client Credentials 配置是否完整 */
+export function isAzureAd(source: {
+  azureTenantId?: string | null;
+  azureClientId?: string | null;
+}): boolean {
+  return !!(source.azureTenantId?.trim() && source.azureClientId?.trim());
 }
 export type KeyUpdate =
   | { action: "set"; providerId: string; value: string }

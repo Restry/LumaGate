@@ -44,6 +44,7 @@ export function DashboardShell({
   busy,
   onGateway,
   onCopyDirectory,
+  hasUpdate = false,
   children,
 }: {
   snapshot: Snapshot | null;
@@ -52,6 +53,7 @@ export function DashboardShell({
   busy: boolean;
   onGateway: () => void;
   onCopyDirectory: () => void;
+  hasUpdate?: boolean;
   children: ReactNode;
 }) {
   const [collapsed, setCollapsed] = useState(true);
@@ -88,6 +90,9 @@ export function DashboardShell({
         >
           <entry.icon size={17} aria-hidden />
           <span>{entry.name}</span>
+          {entry.id === "settings" && hasUpdate && (
+            <i className="mg-nav-badge" aria-label="有可用更新" />
+          )}
         </button>
       </TooltipTrigger>
       {collapsed && (

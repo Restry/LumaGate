@@ -147,6 +147,14 @@
   font-size: 11px;
   color: var(--mg-muted);
 }
+.mg-nav-badge {
+  inline-size: 7px;
+  block-size: 7px;
+  border-radius: 50%;
+  background: #e5484d;
+  margin-inline-start: auto;
+  flex-shrink: 0;
+}
 .mg-sidebar-gateway {
   border-top: 1px solid var(--mg-line);
   margin-top: 22px;
@@ -324,6 +332,81 @@
 }
 .mc-overview .mg-heading-actions .mg-select {
   width: 138px;
+}
+.mc-onboarding {
+  padding: 28px 24px;
+  margin-block-end: 16px;
+  border: 1px solid var(--mg-line);
+  border-radius: 12px;
+  background: var(--mg-surface);
+  text-align: center;
+}
+.mc-onboarding h2 {
+  font-size: 18px;
+  font-weight: 600;
+  margin-block-end: 4px;
+}
+.mc-onboarding > p {
+  color: var(--mg-muted);
+  margin-block-end: 20px;
+}
+.mc-onboarding-steps {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-block-end: 20px;
+}
+.mc-step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border: 1px solid var(--mg-line);
+  border-radius: 10px;
+  background: var(--mg-soft);
+  text-align: start;
+  min-inline-size: 160px;
+}
+.mc-step.is-done {
+  border-color: var(--mg-success);
+  background: var(--mg-success-bg);
+}
+.mc-step-num {
+  inline-size: 26px;
+  block-size: 26px;
+  border-radius: 50%;
+  background: var(--mg-line);
+  color: var(--mg-muted);
+  font-size: 12px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.mc-step.is-done .mc-step-num {
+  background: var(--mg-success);
+  color: var(--mg-success-bg);
+}
+.mc-step strong {
+  display: block;
+  font-size: 13px;
+}
+.mc-step small {
+  color: var(--mg-muted);
+  font-size: 12px;
+}
+.mc-onboarding-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+@media (max-width: 720px) {
+  .mc-onboarding-steps {
+    flex-direction: column;
+  }
 }
 .mc-notice {
   display: flex;
@@ -760,6 +843,23 @@
   font-size: 11px;
   color: var(--mg-muted);
   margin-top: 4px;
+}
+.mc-provider-choice-wrap {
+  display: flex;
+  flex-direction: column;
+}
+.mc-provider-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px 8px 42px;
+  font-size: 12px;
+  color: var(--mc-warning);
+  line-height: 1.4;
+}
+.mc-provider-status span {
+  flex: 1;
+  min-width: 0;
 }
 .mc-provider-note {
   display: flex;

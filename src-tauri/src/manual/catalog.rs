@@ -85,6 +85,12 @@ pub struct Source {
     pub key_env: String,
     #[serde(default)]
     pub key_ref: Option<String>,
+    /// Azure AD 应用注册租户 ID（Client Credentials）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub azure_tenant_id: Option<String>,
+    /// Azure AD 应用注册客户端 ID；客户端密钥沿用 key_ref / key_env
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub azure_client_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub copilot: Option<super::copilot::Binding>,
     pub protocol: Protocol,
@@ -502,11 +508,47 @@ pub fn endpoint(source: &Source, path: &str) -> String {
     }
 }
 
+/// Azure Foundry 用 `/{surface}/v1/...` 区分 API 面：OpenAI 走 `/openai/v1`，
+/// Anthropic 走 `/anthropic/v1`。目录发现固定走 OpenAI 面；模型调用要按协议换面，
+/// 否则 Anthropic 模型会打到 `/openai/v1/messages` 得 404。
+pub fn surface_base(base: &str, protocol: &Protocol) -> String {
+    let base = base.trim_end_matches('/');
+    let (from, to) = match protocol {
+        Protocol::Anthropic => ("/openai/v1", "/anthropic/v1"),
+        Protocol::OpenaiChat | Protocol::OpenaiResponses => ("/anthropic/v1", "/openai/v1"),
+    };
+    match base.strip_suffix(from) {
+        Some(stem) => format!("{stem}{to}"),
+        None => base.to_string(),
+    }
+}
+
+/// 模型调用的上游地址。与 `endpoint()`（目录发现）不同，这里按协议换 API 面。
+pub fn model_endpoint(source: &Source, protocol: &Protocol) -> String {
+    let base = surface_base(source.base_url.trim_end_matches('/'), protocol);
+    if base.ends_with("/v1") {
+        format!("{base}/{}", protocol.endpoint())
+    } else {
+        format!("{base}/v1/{}", protocol.endpoint())
+    }
+}
+
 pub fn upstream_provider(source: &Source, model: &Model, app: &str) -> Result<Provider, String> {
     if source.copilot.is_some() {
         return Err("Copilot 需要由账号凭据解析器转发".into());
     }
     upstream_provider_with_key(source, model, app, &credentials(source)?)
+}
+/// Azure AD Client Credentials 配置完整（租户 + 客户端）
+pub fn is_azure_ad(source: &Source) -> bool {
+    source
+        .azure_tenant_id
+        .as_deref()
+        .is_some_and(|value| !value.is_empty())
+        && source
+            .azure_client_id
+            .as_deref()
+            .is_some_and(|value| !value.is_empty())
 }
 pub fn upstream_provider_with_key(
     source: &Source,
@@ -518,7 +560,8 @@ pub fn upstream_provider_with_key(
     effective_source.protocol = super::endpoints::protocol(model);
     let version = deployment_version(source, model);
     let source = &effective_source;
-    let base = source.base_url.trim_end_matches('/');
+    // 换 API 面：Anthropic 模型要走 /anthropic/v1，不是配置里的 /openai/v1。
+    let base = surface_base(source.base_url.trim_end_matches('/'), &source.protocol);
     let mut config = if app == "claude" {
         json!({"env": {"ANTHROPIC_BASE_URL": base, "ANTHROPIC_AUTH_TOKEN": key, "ANTHROPIC_MODEL": model.id}, "api_format": source.protocol.format()})
     } else {
@@ -532,6 +575,12 @@ pub fn upstream_provider_with_key(
     // 只存在请求快照里，绝不调用上游 ProviderService 的 live 写入路径。
     config["manual_upstream_model"] = json!(model.id);
     config["manual_credential_version"] = json!(version);
+    // Azure AD：key 是 client_secret，转发器用它换 Bearer token，不再当 API Key 发出。
+    if is_azure_ad(source) {
+        config["azureTenantId"] = json!(source.azure_tenant_id.as_deref().unwrap_or_default());
+        config["azureClientId"] = json!(source.azure_client_id.as_deref().unwrap_or_default());
+        config["azureClientSecret"] = json!(key);
+    }
     Ok(Provider::with_id(
         source.id.clone(),
         source.name.clone(),
@@ -573,6 +622,8 @@ mod tests {
             base_url: "http://127.0.0.1:1234/v1".into(),
             key_env: String::new(),
             key_ref: None,
+            azure_tenant_id: None,
+            azure_client_id: None,
             copilot: None,
             protocol: Protocol::OpenaiChat,
             enabled: true,
@@ -587,6 +638,46 @@ mod tests {
             }],
         }
     }
+    #[test]
+    fn azure_foundry_surface_follows_protocol() {
+        let openai = "https://liwei-m6u2eooi-eastus2.services.ai.azure.com/openai/v1";
+        let anthropic = "https://liwei-m6u2eooi-eastus2.services.ai.azure.com/anthropic/v1";
+        assert_eq!(surface_base(openai, &Protocol::Anthropic), anthropic);
+        assert_eq!(surface_base(openai, &Protocol::OpenaiChat), openai);
+        assert_eq!(surface_base(anthropic, &Protocol::OpenaiChat), openai);
+        assert_eq!(surface_base(anthropic, &Protocol::Anthropic), anthropic);
+        // 非 Azure Foundry 的 base 不动，避免误伤官方 Anthropic / OpenAI 端点。
+        for base in ["https://api.anthropic.com/v1", "https://api.openai.com/v1"] {
+            for protocol in [Protocol::Anthropic, Protocol::OpenaiChat, Protocol::OpenaiResponses] {
+                assert_eq!(surface_base(base, &protocol), base);
+            }
+        }
+    }
+
+    #[test]
+    fn model_endpoint_picks_surface_and_path_by_protocol() {
+        let mut src = source("azure");
+        src.base_url = "https://liwei-m6u2eooi-eastus2.services.ai.azure.com/openai/v1".into();
+        assert_eq!(
+            model_endpoint(&src, &Protocol::Anthropic),
+            "https://liwei-m6u2eooi-eastus2.services.ai.azure.com/anthropic/v1/messages"
+        );
+        assert_eq!(
+            model_endpoint(&src, &Protocol::OpenaiChat),
+            "https://liwei-m6u2eooi-eastus2.services.ai.azure.com/openai/v1/chat/completions"
+        );
+        assert_eq!(
+            model_endpoint(&src, &Protocol::OpenaiResponses),
+            "https://liwei-m6u2eooi-eastus2.services.ai.azure.com/openai/v1/responses"
+        );
+        // 目录发现固定走 OpenAI 面，不受模型协议影响。
+        src.protocol = Protocol::Anthropic;
+        assert_eq!(
+            endpoint(&src, "models"),
+            "https://liwei-m6u2eooi-eastus2.services.ai.azure.com/openai/v1/models"
+        );
+    }
+
     #[test]
     fn legacy_provider_cost_participation_defaults_on_and_roundtrips_off() {
         let db = Database::memory().unwrap();

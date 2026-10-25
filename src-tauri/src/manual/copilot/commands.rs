@@ -78,6 +78,8 @@ pub(super) async fn link(
         base_url: API_ROOT.into(),
         key_env: String::new(),
         key_ref: None,
+        azure_tenant_id: None,
+        azure_client_id: None,
         copilot: Some(binding),
         protocol: Protocol::OpenaiChat,
         enabled: old.as_ref().map(|p| p.enabled).unwrap_or(true),

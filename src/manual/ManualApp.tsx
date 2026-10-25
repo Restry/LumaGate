@@ -12,7 +12,8 @@ import {
 import { ModelCatalog } from "./ModelCatalog";
 import { NetworkSettings } from "./NetworkSettings";
 import { initialCatalogView } from "./catalog-view";
-import { Updates } from "./Updates";
+import { Updates, UpdateBanner } from "./Updates";
+import { useUpdateState } from "./use-update";
 import { AgentWorkspace, type SyncReceipt } from "./AgentWorkspace";
 import {
   ProviderEditor,
@@ -88,6 +89,9 @@ export default function ManualApp({
     id: number;
     filters: Partial<LogFilters>;
   } | null>(null);
+  const updateView = useUpdateState();
+  const [updateDismissed, setUpdateDismissed] = useState(false);
+  const [confirmStop, setConfirmStop] = useState(false);
   function openLogs(filters: Partial<LogFilters> = {}) {
     setLogNavigation((current) => ({ id: (current?.id ?? 0) + 1, filters }));
     setTab("logs");
@@ -250,22 +254,31 @@ export default function ManualApp({
           if (next === "models") setReturnToModel(false);
         }}
         busy={busy}
-        onGateway={() =>
-          void action(async () => {
-            await invoke("manual_gateway", {
-              running: !snapshot?.status.running,
+        onGateway={() => {
+          if (snapshot?.status.running) setConfirmStop(true);
+          else
+            void action(async () => {
+              await invoke("manual_gateway", { running: true });
+              return { text: "网关已启动" };
             });
-            return {
-              text: snapshot?.status.running ? "网关已停止" : "网关已启动",
-            };
-          })
-        }
+        }}
         onCopyDirectory={() => {
           if (snapshot)
             void copy(`${snapshot.baseUrl}/v1/models`, "模型目录地址");
         }}
+        hasUpdate={!!updateView?.prompt && !updateDismissed}
       >
         <Updates settingsVisible={tab === "settings"} />
+        {updateView?.prompt && !updateDismissed && (
+          <UpdateBanner
+            view={updateView}
+            onInstall={() => {
+              void invoke("manual_update_install");
+              setUpdateDismissed(true);
+            }}
+            onDismiss={() => setUpdateDismissed(true)}
+          />
+        )}
         {!snapshot ? (
           <section className="mg-backend-state" aria-busy={loading}>
             <h1>{loadError ? "无法读取本机网关状态" : "正在读取本机网关…"}</h1>
@@ -600,6 +613,37 @@ export default function ManualApp({
             }, "正在获取 Copilot 模型目录…");
             setCopilotLogin(false);
           }}
+        />
+      )}
+      {confirmStop && (
+        <Modal
+          title="停止网关？"
+          description="停止后正在生成的请求会被中断，新的请求将无法路由。确定要停止吗？"
+          busy={busy}
+          onClose={() => setConfirmStop(false)}
+          footer={
+            <>
+              <ActionButton
+                variant="outline"
+                disabled={busy}
+                onClick={() => setConfirmStop(false)}
+              >
+                取消
+              </ActionButton>
+              <ActionButton
+                disabled={busy}
+                onClick={() =>
+                  void action(async () => {
+                    await invoke("manual_gateway", { running: false });
+                    setConfirmStop(false);
+                    return { text: "网关已停止" };
+                  })
+                }
+              >
+                确认停止
+              </ActionButton>
+            </>
+          }
         />
       )}
       {copilotReset && (

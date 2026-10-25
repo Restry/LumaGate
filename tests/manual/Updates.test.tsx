@@ -1,8 +1,8 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
-import { Updates, type UpdateView } from "@/manual/Updates";
+import { Updates, UpdateBanner, type UpdateView } from "@/manual/Updates";
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
   isTauri: () => true,
@@ -41,21 +41,30 @@ beforeEach(() => {
     throw new Error(`unexpected command ${name}`);
   });
 });
-it("requires confirmation, and Later dismisses without downloading", async () => {
-  render(<Updates settingsVisible={false} />);
-  const dialog = await screen.findByRole("dialog");
-  expect(within(dialog).getByText("官方更新说明")).toBeVisible();
+it("shows a non-blocking banner and dismiss removes it without downloading", async () => {
+  const onInstall = vi.fn();
+  const onDismiss = vi.fn();
+  render(
+    <UpdateBanner view={view} onInstall={onInstall} onDismiss={onDismiss} />,
+  );
+  expect(screen.getByText("发现新版本 3.24.8")).toBeVisible();
   expect(rpc).not.toHaveBeenCalledWith(
     "manual_update_install",
     expect.anything(),
   );
-  await userEvent.click(within(dialog).getByRole("button", { name: "稍后" }));
-  await waitFor(() =>
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  await userEvent.click(
+    screen.getByRole("button", { name: "关闭更新提示" }),
   );
-  expect(
-    rpc.mock.calls.some(([name]) => name === "manual_update_install"),
-  ).toBe(false);
+  expect(onDismiss).toHaveBeenCalled();
+  expect(onInstall).not.toHaveBeenCalled();
+});
+it("banner install button triggers install callback", async () => {
+  const onInstall = vi.fn();
+  render(
+    <UpdateBanner view={view} onInstall={onInstall} onDismiss={vi.fn()} />,
+  );
+  await userEvent.click(screen.getByRole("button", { name: "下载并更新" }));
+  expect(onInstall).toHaveBeenCalled();
 });
 it("keeps cancellation available while the native request waits for a stream", async () => {
   let finish: (() => void) | undefined;
@@ -82,16 +91,15 @@ it("keeps cancellation available while the native request waits for a stream", a
     throw new Error(`unexpected command ${name}`);
   });
   render(<Updates settingsVisible />);
-  const dialog = await screen.findByRole("dialog");
+  await screen.findByText("当前版本 3.24.7");
   await userEvent.click(
-    within(dialog).getByRole("button", { name: "下载并更新" }),
+    screen.getByRole("button", { name: /下载并更新/ }),
   );
-  expect(await within(dialog).findByText("等待 1 个请求结束")).toBeVisible();
+  expect(await screen.findByText("等待 1 个请求结束")).toBeVisible();
   await userEvent.click(
-    within(dialog).getByRole("button", { name: "取消更新，继续服务" }),
+    screen.getByRole("button", { name: /取消更新|稍后/ }),
   );
   expect(await screen.findByText("已恢复服务")).toBeVisible();
-  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
 it("shows check errors inline without opening unsolicited dialogs", async () => {
   view = { ...view, prompt: false, version: null, phase: "idle" };

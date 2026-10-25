@@ -58,3 +58,35 @@
   line-height: 1.7;
   margin-block-start: 12px;
 }
+
+/* Non-blocking update banner */
+.mg-update-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  margin-block-end: 12px;
+  border: 1px solid var(--mc-accent-soft);
+  border-radius: 10px;
+  background: var(--mc-accent-soft);
+  color: var(--mg-ink);
+  font-size: 13px;
+}
+.mg-update-banner-dot {
+  inline-size: 8px;
+  block-size: 8px;
+  border-radius: 50%;
+  background: var(--mc-accent);
+  flex-shrink: 0;
+}
+.mg-update-banner-text {
+  flex: 1;
+  min-width: 0;
+}
+.mg-update-banner-text strong {
+  font-weight: 600;
+}
+.mg-update-banner-text span {
+  color: var(--mg-muted);
+  margin-inline-start: 8px;
+}

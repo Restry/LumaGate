@@ -167,6 +167,8 @@ pub struct RequestForwarder {
     failover_manager: Arc<FailoverSwitchManager>,
     /// AppHandle，用于发射事件和更新托盘
     app_handle: Option<tauri::AppHandle>,
+    /// Azure AD token 缓存。手动网关不带 AppHandle，凭据解析不能依赖 Tauri 状态。
+    azure_ad: super::providers::azure_ad_auth::SharedAzureAdManager,
     /// 请求开始时的"当前供应商 ID"（用于判断是否需要同步 UI/托盘）
     current_provider_id_at_start: String,
     /// 代理会话 ID（用于 Gemini Native shadow replay）
@@ -270,6 +272,7 @@ impl RequestForwarder {
             native_responses_identity,
             failover_manager,
             app_handle,
+            azure_ad: super::providers::azure_ad_auth::new_shared(crate::proxy::http_client::get()),
             current_provider_id_at_start,
             session_id,
             session_client_provided,
@@ -1961,6 +1964,52 @@ impl RequestForwarder {
                     return Err(ProxyError::AuthError(
                         "xAI OAuth 认证不可用（无 AppHandle）".to_string(),
                     ));
+                }
+            }
+
+            // Azure AD OAuth: fetch access token via Client Credentials flow.
+            if auth.strategy == AuthStrategy::AzureAD {
+                use crate::proxy::providers::azure_ad_auth::AzureAdConfig;
+
+                let config = AzureAdConfig {
+                    tenant_id: provider
+                        .settings_config
+                        .get("azureTenantId")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    client_id: provider
+                        .settings_config
+                        .get("azureClientId")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    client_secret: provider
+                        .settings_config
+                        .get("azureClientSecret")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                };
+                // 手动网关没有 AppHandle；token 缓存放在 forwarder 自己身上。
+                let manager = match &self.app_handle {
+                    Some(app_handle) => {
+                        use tauri::Manager;
+                        app_handle.state::<crate::commands::AzureAdState>().0.clone()
+                    }
+                    None => self.azure_ad.clone(),
+                };
+                match manager.get_access_token(&config).await {
+                    Ok(token) => {
+                        auth = AuthInfo::new(token, AuthStrategy::AzureAD);
+                        log::debug!("[AzureAD] 成功获取 access_token");
+                    }
+                    Err(error) => {
+                        log::error!("[AzureAD] 获取 access_token 失败: {error}");
+                        return Err(ProxyError::AuthError(format!(
+                            "Azure AD OAuth 认证失败: {error}"
+                        )));
+                    }
                 }
             }
 
@@ -4010,6 +4059,9 @@ mod tests {
             ),
             failover_manager: Arc::new(FailoverSwitchManager::new(db)),
             app_handle: None,
+            azure_ad: crate::proxy::providers::azure_ad_auth::new_shared(
+                crate::proxy::http_client::get(),
+            ),
             current_provider_id_at_start: String::new(),
             session_id: String::new(),
             session_client_provided: false,

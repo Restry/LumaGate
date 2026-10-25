@@ -50,7 +50,7 @@ async fn relay(
         return StatusCode::BAD_REQUEST.into_response();
     };
     let protocol = endpoints::protocol(model);
-    let url = catalog::endpoint(&state.source, protocol.endpoint());
+    let url = catalog::model_endpoint(&state.source, &protocol);
     let expected = url::Url::parse(&url).unwrap();
     let limit = body
         .get("max_output_tokens")

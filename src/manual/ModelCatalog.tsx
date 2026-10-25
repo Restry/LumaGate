@@ -296,7 +296,7 @@ export function ModelCatalog({
                     <span>最大输出</span>
                     <span>路由</span>
                     <span>上次测试</span>
-                    <span>启用</span>
+                    <span>操作</span>
                   </div>
                   <ul
                     className="mg-model-scroll mg-model-records"
@@ -395,7 +395,7 @@ export function ModelCatalog({
                           <Switch
                             checked
                             disabled={actions.busy}
-                            aria-label={`启用模型 ${group.model.id}`}
+                            aria-label={`屏蔽模型 ${group.model.id}`}
                             onCheckedChange={() =>
                               actions.onBlock(group.model.id, true)
                             }

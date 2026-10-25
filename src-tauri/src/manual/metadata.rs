@@ -345,6 +345,8 @@ mod tests {
             base_url: "https://example.com/v1".into(),
             key_env: String::new(),
             key_ref: None,
+            azure_tenant_id: None,
+            azure_client_id: None,
             copilot: None,
             protocol: Protocol::OpenaiResponses,
             enabled: true,

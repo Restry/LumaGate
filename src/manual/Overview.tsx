@@ -4,6 +4,7 @@ import {
   Activity,
   ArrowRight,
   Info,
+  Layers3,
   RefreshCw,
   ShieldCheck,
   Zap,
@@ -170,6 +171,45 @@ export function Overview({ snapshot, onLogs, onProviders }: Props) {
           </ActionButton>
         </div>
       </header>
+      {result &&
+        !stats?.total &&
+        snapshot.document.providers.length === 0 && (
+        <div className="mc-onboarding" role="status">
+          <h2>开始使用 LumaGate</h2>
+          <p>三步接入你的 AI 模型网关</p>
+          <div className="mc-onboarding-steps">
+            <div
+              className={`mc-step ${snapshot.status.running ? "is-done" : ""}`}
+            >
+              <span className="mc-step-num">1</span>
+              <div>
+                <strong>启动网关</strong>
+                <small>开启本地路由服务</small>
+              </div>
+            </div>
+            <div className="mc-step">
+              <span className="mc-step-num">2</span>
+              <div>
+                <strong>添加 Provider</strong>
+                <small>连接模型 API 来源</small>
+              </div>
+            </div>
+            <div className="mc-step">
+              <span className="mc-step-num">3</span>
+              <div>
+                <strong>同步客户端</strong>
+                <small>配置你的 AI 编码工具</small>
+              </div>
+            </div>
+          </div>
+          <div className="mc-onboarding-actions">
+            <ActionButton size="sm" variant="outline" onClick={onProviders}>
+              <Layers3 size={14} />
+              管理 Provider
+            </ActionButton>
+          </div>
+        </div>
+      )}
       {(error || storageError || pending) && (
         <div className="mc-notice" role={pending ? "status" : "alert"}>
           {storageError

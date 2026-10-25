@@ -749,6 +749,15 @@ impl ProviderAdapter for ClaudeAdapter {
     fn extract_auth(&self, provider: &Provider) -> Option<AuthInfo> {
         let provider_type = self.provider_type(provider);
 
+        // Azure AD OAuth (Azure Foundry / Azure OpenAI): placeholder credentials;
+        // the real access_token is resolved per-request via Client Credentials flow.
+        if provider.is_azure_ad() {
+            return Some(AuthInfo::new(
+                "azure_ad_placeholder".to_string(),
+                AuthStrategy::AzureAD,
+            ));
+        }
+
         // GitHub Copilot 使用特殊的认证策略
         // 实际的 token 会在代理请求时动态获取
         if provider_type == ProviderType::GitHubCopilot {
@@ -910,6 +919,10 @@ impl ProviderAdapter for ClaudeAdapter {
                 ]
             }
             AuthStrategy::XaiOAuth => {
+                vec![(HeaderName::from_static("authorization"), hv(&bearer)?)]
+            }
+            AuthStrategy::AzureAD => {
+                // bearer token 由 forwarder 通过 Client Credentials 动态获取并注入 auth.api_key
                 vec![(HeaderName::from_static("authorization"), hv(&bearer)?)]
             }
             AuthStrategy::GitHubCopilot => {

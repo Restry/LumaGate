@@ -381,7 +381,7 @@ async fn request(
     client: &reqwest::Client,
     source: &Source,
     method: reqwest::Method,
-    path: &str,
+    url: &str,
 ) -> Result<reqwest::RequestBuilder, String> {
     catalog::validate_url(&source.base_url)?;
     let credential_source = source.clone();
@@ -389,7 +389,19 @@ async fn request(
         tauri::async_runtime::spawn_blocking(move || catalog::credentials(&credential_source))
             .await
             .map_err(|_| "密钥读取任务失败".to_string())??;
-    let builder = client.request(method, catalog::endpoint(source, path));
+    let builder = client.request(method, url.to_string());
+    // Azure AD：key 是 client_secret，先换 Bearer token 再打目录接口。
+    if catalog::is_azure_ad(source) {
+        let config = crate::proxy::providers::azure_ad_auth::AzureAdConfig {
+            tenant_id: source.azure_tenant_id.clone().unwrap_or_default(),
+            client_id: source.azure_client_id.clone().unwrap_or_default(),
+            client_secret: key,
+        };
+        let token = crate::proxy::providers::azure_ad_auth::fetch_access_token(client, &config)
+            .await
+            .map_err(|error| format!("Azure AD 认证失败：{error}"))?;
+        return Ok(builder.bearer_auth(token));
+    }
     Ok(match source.protocol {
         catalog::Protocol::Anthropic => builder
             .header("x-api-key", key)
@@ -421,7 +433,14 @@ async fn discover_models(source: &Source) -> Result<Vec<Model>, String> {
     let mut cursors = std::collections::HashSet::new();
     // 分页只读目录，不做探测。页数、总时间和响应体都有上限。
     for _ in 0..20 {
-        let mut builder = request(&client, source, reqwest::Method::GET, "models").await?;
+        // 目录发现固定走 OpenAI 面，不随模型协议换 surface。
+        let mut builder = request(
+            &client,
+            source,
+            reqwest::Method::GET,
+            &catalog::endpoint(source, "models"),
+        )
+        .await?;
         if source.protocol == catalog::Protocol::Anthropic {
             builder = builder.query(&[("limit", "100")]);
         }
@@ -493,6 +512,111 @@ async fn discover_models(source: &Source) -> Result<Vec<Model>, String> {
     Err("目录超过 20 页，未覆盖已有列表".into())
 }
 
+/// Azure Foundry 的 `/models` 是资源可提供的全量目录，不是已部署列表。
+/// 目录里大量模型从未部署，实调会得 DeploymentNotFound。
+///
+/// 这里逐个探测，只保留真实部署的模型，并标上实际走的协议面（chat 或 responses）。
+/// 未部署的模型不会触发推理；已部署的只回一个 token 的最小请求。
+/// 探测是显式步骤，不挂在目录发现里——目录读取仍然不产生模型调用。
+async fn probe_deployed_models(
+    source: &Source,
+    models: Vec<Model>,
+) -> Result<Vec<Model>, String> {
+    use futures::stream::{self, StreamExt};
+
+    // 自持 token 缓存：500 个模型不能每个都重新换一次 token。
+    let client = client()?;
+    let manager = crate::proxy::providers::azure_ad_auth::new_shared(client.clone());
+    let key_source = source.clone();
+    let secret = tauri::async_runtime::spawn_blocking(move || catalog::credentials(&key_source))
+        .await
+        .map_err(|_| "密钥读取任务失败".to_string())??;
+    let config = crate::proxy::providers::azure_ad_auth::AzureAdConfig {
+        tenant_id: source.azure_tenant_id.clone().unwrap_or_default(),
+        client_id: source.azure_client_id.clone().unwrap_or_default(),
+        client_secret: secret,
+    };
+    let token = manager
+        .get_access_token(&config)
+        .await
+        .map_err(|error| format!("Azure AD 认证失败：{error}"))?;
+
+    let total = models.len();
+    let mut deployed: Vec<(usize, Model)> = stream::iter(models.into_iter().enumerate())
+        .map(|(index, model)| {
+            let client = client.clone();
+            let token = token.clone();
+            let source = source.clone();
+            async move {
+                let hit = probe_one_deployment(&client, &source, &token, &model).await;
+                (index, model, hit)
+            }
+        })
+        // 上游是限速的，别把目录打满。
+        .buffer_unordered(12)
+        .filter_map(|(index, mut model, hit)| async move {
+            hit.map(|protocol| {
+                model.protocol_override = Some(protocol);
+                model.enabled = true;
+                (index, model)
+            })
+        })
+        .collect()
+        .await;
+    deployed.sort_by_key(|(index, _)| *index);
+    let kept: Vec<Model> = deployed.into_iter().map(|(_, model)| model).collect();
+    log::info!(
+        "[Probe] {} 个目录条目，{} 个真实部署",
+        total,
+        kept.len()
+    );
+    if kept.is_empty() {
+        return Err("探测未发现已部署模型，已有列表保持不变".into());
+    }
+    Ok(kept)
+}
+
+/// 逐个探测单个模型。先试 chat，再试 responses，返回它真实走的协议。
+async fn probe_one_deployment(
+    client: &reqwest::Client,
+    source: &Source,
+    token: &str,
+    model: &Model,
+) -> Option<catalog::Protocol> {
+    for protocol in [
+        catalog::Protocol::OpenaiChat,
+        catalog::Protocol::OpenaiResponses,
+    ] {
+        let mut effective = source.clone();
+        effective.protocol = protocol.clone();
+        let payload = match protocol {
+            catalog::Protocol::OpenaiResponses => {
+                json!({"model": model.id, "input": "hi"})
+            }
+            _ => json!({"model": model.id, "messages": [{"role": "user", "content": "hi"}]}),
+        };
+        let url = catalog::model_endpoint(&effective, &protocol);
+        let builder = client
+            .post(url)
+            .bearer_auth(token)
+            .header("anthropic-version", "2023-06-01")
+            .json(&payload);
+        let Ok(response) = builder.send().await else {
+            continue;
+        };
+        let status = response.status();
+        if status.is_success() {
+            return Some(protocol);
+        }
+        // DeploymentNotFound / 404 = 没部署。其余错误不改判定，换下一个协议再试。
+        let body = response.text().await.unwrap_or_default();
+        if body.contains("DeploymentNotFound") {
+            return None;
+        }
+    }
+    None
+}
+
 #[tauri::command]
 async fn manual_discover(
     state: State<'_, ManualState>,
@@ -512,11 +636,18 @@ async fn discover_catalog(state: &ManualState, provider_id: &str) -> Result<usiz
         .iter()
         .find(|s| s.id == provider_id)
         .ok_or("Provider 不存在")?;
-    let models = tokio::time::timeout(Duration::from_secs(90), async {
+    let models = tokio::time::timeout(Duration::from_secs(300), async {
         if source.copilot.is_some() {
             state.copilot.discover(source).await
         } else {
-            discover_models(source).await
+            let catalog = discover_models(source).await?;
+            // Azure Foundry 的 /models 是资源全量目录，不是已部署列表。
+            // 只保留真实部署的模型，否则界面上会堆满从未部署的条目。
+            if catalog::is_azure_ad(source) {
+                probe_deployed_models(source, catalog).await
+            } else {
+                Ok(catalog)
+            }
         }
     })
     .await
@@ -561,7 +692,7 @@ async fn test_model_once(source: &Source, model: &Model) -> Result<(), String> {
             &client,
             source,
             reqwest::Method::POST,
-            source.protocol.endpoint(),
+            &catalog::model_endpoint(source, &source.protocol),
         )
         .await?
         .json(&payload)

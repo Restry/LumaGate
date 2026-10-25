@@ -135,6 +135,13 @@ pub enum AuthStrategy {
     ///
     /// access token 由 xAI Device Code 流程获取并由 forwarder 动态注入。
     XaiOAuth,
+
+    /// Azure AD OAuth（Azure Foundry / Azure OpenAI）
+    ///
+    /// - Header: `Authorization: Bearer <access_token>`
+    ///
+    /// access token 由 Azure AD Client Credentials 流程获取并由 forwarder 动态注入。
+    AzureAD,
 }
 
 #[cfg(test)]

@@ -192,6 +192,8 @@ async fn integration(
         base_url: format!("http://{address}/v1"),
         key_env: String::new(),
         key_ref: None,
+        azure_tenant_id: None,
+        azure_client_id: None,
         copilot: None,
         protocol,
         enabled: true,

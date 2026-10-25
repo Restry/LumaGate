@@ -9,6 +9,8 @@ fn source() -> Source {
         base_url: API_ROOT.into(),
         key_env: String::new(),
         key_ref: None,
+        azure_tenant_id: None,
+        azure_client_id: None,
         copilot: Some(Binding {
             account_id: "123".into(),
             grant_id: uuid::Uuid::new_v4().to_string(),

@@ -268,7 +268,7 @@ describe("手动网关操作边界", () => {
     });
     expect(screen.queryByLabelText(/模型 ID/)).not.toBeInTheDocument();
     expect(screen.getByText("填写连接地址与 API Key。")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "保存，不同步" }));
+    await user.click(screen.getByRole("button", { name: "保存" }));
     await waitFor(() => expect(calls()).toContain("manual_save"));
     expect(calls()).not.toContain("manual_discover");
     expect(calls()).not.toContain("manual_apply_sync");
@@ -628,7 +628,7 @@ describe("直接填写密钥", () => {
       target: { value: "https://direct.example/v1" },
     });
     fireEvent.change(input, { target: { value: "fixture-direct-key-value" } });
-    await user.click(screen.getByRole("button", { name: "保存，不同步" }));
+    await user.click(screen.getByRole("button", { name: "保存" }));
     await waitFor(() => expect(calls()).toContain("manual_save"));
     const args = rpc.mock.calls.find(([name]) => name === "manual_save")?.[1];
     expect(args).toMatchObject({
@@ -658,7 +658,7 @@ describe("直接填写密钥", () => {
       "已保存，留空保留原密钥",
     );
     expect(calls()).toEqual(["manual_snapshot"]);
-    await user.click(screen.getByRole("button", { name: "保存，不同步" }));
+    await user.click(screen.getByRole("button", { name: "保存" }));
     await waitFor(() => expect(calls()).toContain("manual_save"));
     const args = rpc.mock.calls.find(([name]) => name === "manual_save")?.[1];
     expect(
@@ -694,7 +694,7 @@ describe("直接填写密钥", () => {
     fireEvent.change(screen.getByLabelText("API Key"), {
       target: { value: "fixture-replace-env" },
     });
-    await user.click(screen.getByRole("button", { name: "保存，不同步" }));
+    await user.click(screen.getByRole("button", { name: "保存" }));
     await waitFor(() => expect(calls()).toContain("manual_save"));
     const args = rpc.mock.calls.find(([name]) => name === "manual_save")?.[1];
     expect(args).toMatchObject({

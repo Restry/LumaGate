@@ -11,7 +11,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { ActionButton } from "./ui";
-import { protocolLabels, type Source } from "./types";
+import { protocolLabels, isAzureAd, type Source } from "./types";
 export { DashboardShell as Shell } from "./DashboardShell";
 export type Workspace =
   | "overview"
@@ -103,23 +103,6 @@ export function ProviderList({
           </ActionButton>
         </div>
       </div>
-      {copilotStatus?.message && (
-        <div className="mc-notice" role="alert">
-          {copilotStatus.message}
-          {(onCopilotLogin || onCopilotReset) && (
-            <ActionButton
-              variant="outline"
-              size="sm"
-              disabled={disabled}
-              onClick={copilotStatus.login ? onCopilotLogin : onCopilotReset}
-            >
-              {copilotStatus.login
-                ? "重新登录 GitHub"
-                : "处理本机 Copilot 登录"}
-            </ActionButton>
-          )}
-        </div>
-      )}
       {!sources.length ? (
         <div className="mg-catalog-empty">
           <h2>还没有模型来源</h2>
@@ -144,24 +127,44 @@ export function ProviderList({
               已配置 <span>{sources.length}</span>
             </p>
             {shown.map((p) => (
-              <button
-                className="mc-provider-choice"
-                key={p.id}
-                aria-label={`选择来源 ${p.name}`}
-                aria-pressed={p.id === selectedId}
-                onClick={() => {
-                  setSelectedId(p.id);
-                  setTab("connection");
-                }}
-              >
-                <span className="mc-avatar">{p.name.slice(0, 1)}</span>
-                <span>
-                  <strong>{p.name}</strong>
-                  <small>
-                    {p.models.length} 个模型 · {p.enabled ? "已启用" : "已停用"}
-                  </small>
-                </span>
-              </button>
+              <div key={p.id} className="mc-provider-choice-wrap">
+                <button
+                  className="mc-provider-choice"
+                  aria-label={`选择来源 ${p.name}`}
+                  aria-pressed={p.id === selectedId}
+                  onClick={() => {
+                    setSelectedId(p.id);
+                    setTab("connection");
+                  }}
+                >
+                  <span className="mc-avatar">{p.name.slice(0, 1)}</span>
+                  <span>
+                    <strong>{p.name}</strong>
+                    <small>
+                      {p.models.length} 个模型 · {p.enabled ? "已启用" : "已停用"}
+                    </small>
+                  </span>
+                </button>
+                {p.copilot && copilotStatus?.message && (
+                  <div className="mc-provider-status" role="alert">
+                    <span>{copilotStatus.message}</span>
+                    {(onCopilotLogin || onCopilotReset) && (
+                      <ActionButton
+                        variant="ghost"
+                        size="sm"
+                        disabled={disabled}
+                        onClick={
+                          copilotStatus.login ? onCopilotLogin : onCopilotReset
+                        }
+                      >
+                        {copilotStatus.login
+                          ? "重新登录"
+                          : "清理登录"}
+                      </ActionButton>
+                    )}
+                  </div>
+                )}
+              </div>
             ))}
             {!shown.length && <p className="mc-empty">没有匹配来源</p>}
             <p className="mc-provider-note">
@@ -234,9 +237,11 @@ export function ProviderList({
                         <dd>
                           {selected.copilot
                             ? "GitHub 设备授权 · 个人账号"
-                            : selected.protocol === "anthropic"
-                              ? "Anthropic x-api-key"
-                              : "Bearer（通用）"}
+                            : isAzureAd(selected)
+                              ? "Azure AD 应用注册 · Client Credentials"
+                              : selected.protocol === "anthropic"
+                                ? "Anthropic x-api-key"
+                                : "Bearer（通用）"}
                         </dd>
                       </div>
                       <div className="mc-field-wide">
@@ -246,22 +251,36 @@ export function ProviderList({
                         </dd>
                       </div>
                       <div className="mc-field-wide">
-                        <dt>{selected.copilot ? "GitHub 账号" : "API 密钥"}</dt>
+                        <dt>
+                          {selected.copilot
+                            ? "GitHub 账号"
+                            : isAzureAd(selected)
+                              ? "客户端密钥"
+                              : "API 密钥"}
+                        </dt>
                         <dd>
                           {selected.copilot
                             ? copilotStatus?.connected
                               ? `${copilotStatus.login} · 已保存登录`
                               : "需要重新登录 GitHub"
-                            : selected.keyRef
-                              ? "API Key 已保存 · 编辑留空保留原密钥"
-                              : selected.keyEnv
-                                ? `使用环境变量 ${selected.keyEnv}`
-                                : "未配置密钥"}
+                            : isAzureAd(selected)
+                              ? selected.keyRef
+                                ? "client_secret 已保存 · 编辑留空保留原密钥"
+                                : selected.keyEnv
+                                  ? `使用环境变量 ${selected.keyEnv}`
+                                  : "未配置 client_secret"
+                              : selected.keyRef
+                                ? "API Key 已保存 · 编辑留空保留原密钥"
+                                : selected.keyEnv
+                                  ? `使用环境变量 ${selected.keyEnv}`
+                                  : "未配置密钥"}
                         </dd>
                         <dd className="mc-field-note">
                           {selected.copilot
                             ? "Copilot 会话按需刷新；凭据保存在本机私有目录，不回显、不写入客户端。模型使用 copilot/ 独立路由，目录存在不代表已经测试可用。"
-                            : "明文保存在本机私有目录，界面不回显；不写入 Agent 配置。"}
+                            : isAzureAd(selected)
+                              ? "client_secret 保存在本机私有目录，界面不回显；请求时用它换 Azure AD 访问令牌，不直接发给上游。"
+                              : "明文保存在本机私有目录，界面不回显；不写入 Agent 配置。"}
                         </dd>
                       </div>
                     </dl>
@@ -286,7 +305,11 @@ export function ProviderList({
                             ? `${selected.models.filter((m) => m.enabled).length} / ${selected.models.length} 个模型已启用`
                             : "下一步：拉取模型目录，再选择启用范围。"}
                         </p>
-                        <p>获取目录不是推理测试，不自动产生模型调用。</p>
+                        <p>
+                          {isAzureAd(selected)
+                            ? "此来源用 Azure AD。/models 返回资源全量目录，不是已部署列表，所以刷新会逐个探测部署状态，只保留已部署的模型。探测对已部署模型只发一个 token 的最小请求。"
+                            : "获取目录不是推理测试，不自动产生模型调用。"}
+                        </p>
                       </div>
                     </div>
                   </>

@@ -48,11 +48,15 @@ export const RollingNumber = memo(function RollingNumber({
   const text = known
     ? new Intl.NumberFormat("en-US", formats[kind]).format(value)
     : "—";
+  const exact = known
+    ? new Intl.NumberFormat("en-US").format(value)
+    : "—";
   return (
     <span
       className={`mg-rolling ${className}`}
       data-number-text={text}
       data-number-kind={kind}
+      title={kind === "compact" || kind === "count" ? exact : text}
     >
       {!known ? (
         "—"
