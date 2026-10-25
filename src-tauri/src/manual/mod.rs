@@ -896,15 +896,28 @@ async fn manual_apply_sync(
 #[tauri::command]
 async fn manual_launch(agent: sync::Agent) -> Result<(), String> {
     // 参数只能来自枚举；不接受命令文本、环境变量或工作目录，避免启动入口变成配置注入入口。
+    // 命令文本是编译期常量；只根据本机是否已写入网关 profile 在两个常量之间二选一。
+    let command_text = tauri::async_runtime::spawn_blocking(move || {
+        let home = crate::config::get_home_dir()
+            .canonicalize()
+            .map_err(|e| e.to_string())?;
+        Ok::<_, String>(
+            if sync::gateway_profile_ready(&home, agent) {
+                agent.gateway_command()
+            } else {
+                agent.command()
+            }
+            .to_string(),
+        )
+    })
+    .await
+    .map_err(|_| "启动任务失败")??;
     #[cfg(target_os = "macos")]
     let mut command = {
         let mut command = std::process::Command::new("osascript");
         command.args([
             "-e",
-            &format!(
-                "tell application \"Terminal\" to do script \"{}\"",
-                agent.command()
-            ),
+            &format!("tell application \"Terminal\" to do script \"{}\"", command_text),
             "-e",
             "tell application \"Terminal\" to activate",
         ]);
@@ -913,13 +926,13 @@ async fn manual_launch(agent: sync::Agent) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     let mut command = {
         let mut command = std::process::Command::new("wt");
-        command.args(["new-tab", agent.command()]);
+        command.args(["new-tab", &command_text]);
         command
     };
     #[cfg(target_os = "linux")]
     let mut command = {
         let mut command = std::process::Command::new("x-terminal-emulator");
-        command.args(["-e", agent.command()]);
+        command.args(["-e", &command_text]);
         command
     };
     let status = tauri::async_runtime::spawn_blocking(move || command.status())

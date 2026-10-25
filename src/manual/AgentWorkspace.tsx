@@ -43,10 +43,10 @@ export const agentInfo: {
   {
     id: "codex",
     name: "Codex",
-    summary: "新增网关 profile，不更换默认 Provider 或模型。",
+    summary: "一键写入网关 profile，不更换默认 Provider 或模型。",
     steps: [
-      "预览并确认 cc_switch_manual profile 和兼容模型目录。",
-      "使用下方命令启用网关 profile，再选择目录中的模型。普通启动不会切换到网关。",
+      "预览并确认 cc_switch_manual profile 和兼容模型目录。若已有别的配置，会提示是否改写。",
+      "接入后点「启动 Codex」即自动带网关 profile 走网关，不用手改 config。下方命令是手动兜底。",
     ],
     command: "codex --profile cc_switch_manual",
   },
@@ -172,7 +172,7 @@ export function AgentWorkspace({
               <Play size={14} aria-hidden />
               启动 {item.name}
             </ActionButton>
-            <span>启动只打开客户端，不写入配置。</span>
+            <span>启动只打开客户端，不写入配置。已接入网关时自动带 profile。</span>
           </div>
           {receipt && (
             <section

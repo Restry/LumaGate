@@ -7,6 +7,12 @@ use std::{
     time::Instant,
 };
 
+/// Codex 的网关 profile 名。写入配置和启动命令都用这一个常量，
+/// 两端必须一致，否则启动会指向不存在的 profile。
+pub const CODEX_PROFILE: &str = "cc_switch_manual";
+/// LumaGate 接管的 Codex 模型目录文件名。
+pub const CODEX_CATALOG_FILE: &str = "cc-switch-manual-models.json";
+
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Agent {
@@ -20,6 +26,37 @@ impl Agent {
             Self::Pi => "pi",
             Self::Claude => "claude",
             Self::Codex => "codex",
+        }
+    }
+
+    /// 网关接入后的启动命令。只返回编译期常量；不拼接外部输入、
+    /// 环境变量或工作目录，避免启动入口变成配置注入入口。
+    /// Pi / Claude 的连接写在各自配置里，启动命令不变；Codex 必须显式带 profile。
+    pub fn gateway_command(self) -> &'static str {
+        match self {
+            Self::Pi | Self::Claude => self.command(),
+            Self::Codex => "codex --profile cc_switch_manual",
+        }
+    }
+}
+
+/// 该客户端的网关接入是否已落盘。只有就位才带 profile 启动，
+/// 否则 Codex 会因未知 profile 而拒绝启动。
+pub fn gateway_profile_ready(home: &Path, agent: Agent) -> bool {
+    match agent {
+        Agent::Pi | Agent::Claude => true,
+        Agent::Codex => {
+            let Ok(Some(bytes)) = read(&home.join(".codex/config.toml")) else {
+                return false;
+            };
+            let Ok(text) = std::str::from_utf8(&bytes) else {
+                return false;
+            };
+            text.parse::<toml_edit::DocumentMut>().ok().is_some_and(|doc| {
+                doc.get("profiles")
+                    .and_then(|profiles| profiles.get(CODEX_PROFILE))
+                    .is_some()
+            })
         }
     }
 }
@@ -195,12 +232,15 @@ impl Plan {
                     .map_err(|_| "Codex 配置必须是 UTF-8")?;
                 let mut config: toml_edit::DocumentMut =
                     text.parse().map_err(|_| "Codex TOML 无效，未修改")?;
-                let catalog_path = home.join(".codex/cc-switch-manual-models.json");
-                if let Some(existing) = config.get("model_catalog_json") {
-                    if existing.as_str() != catalog_path.to_str() {
-                        return Err("Codex 模型目录已由其他配置管理。为避免覆盖，请先手动处理 model_catalog_json，再预览同步".into());
-                    }
-                }
+                let catalog_path = home.join(".codex").join(CODEX_CATALOG_FILE);
+                let catalog_str = catalog_path.to_string_lossy().into_owned();
+                // 已有的 model_catalog_json 归谁管。不拒绝写入，但要放进预览，
+                // 让确认框明确告诉用户这次会改写谁的模型目录。
+                let taken_over = config
+                    .get("model_catalog_json")
+                    .and_then(toml_edit::Item::as_str)
+                    .filter(|existing| *existing != catalog_str)
+                    .map(str::to_string);
                 if let Some(existing) = config.get("model_providers") {
                     if !existing.is_table() {
                         return Err("model_providers 不是 TOML 表，拒绝覆盖".into());
@@ -215,7 +255,7 @@ impl Plan {
                 provider["wire_api"] = toml_edit::value("responses");
                 // 部分客户端要求非空密钥字段；这是兼容占位，不是访问授权。
                 provider["experimental_bearer_token"] = toml_edit::value(super::LOCAL_TOKEN);
-                config["model_providers"]["cc_switch_manual"] = toml_edit::Item::Table(provider);
+                config["model_providers"][CODEX_PROFILE] = toml_edit::Item::Table(provider);
                 // 保留根 model/model_provider；用户明确选择 profile 后才使用网关。
                 if let Some(existing) = config.get("profiles") {
                     if !existing.is_table() {
@@ -226,8 +266,8 @@ impl Plan {
                     config["profiles"] = toml_edit::Item::Table(toml_edit::Table::new());
                 }
                 let mut profile = toml_edit::Table::new();
-                profile["model_provider"] = toml_edit::value("cc_switch_manual");
-                config["profiles"]["cc_switch_manual"] = toml_edit::Item::Table(profile);
+                profile["model_provider"] = toml_edit::value(CODEX_PROFILE);
+                config["profiles"][CODEX_PROFILE] = toml_edit::Item::Table(profile);
                 config["model_catalog_json"] =
                     toml_edit::value(catalog_path.to_string_lossy().to_string());
                 let settings = json!({"modelCatalog": {"models": groups.iter().map(|g| json!({"model":g.id,"displayName":g.model.id})).collect::<Vec<_>>()}});
@@ -254,8 +294,24 @@ impl Plan {
                     after: json_bytes(&catalog),
                     summary: json!({"models":catalog["models"]}),
                 });
-                files.push(FileChange { path, before, after: config.to_string().into_bytes(), summary: json!({"model_providers.cc_switch_manual": {"base_url": format!("{base}/v1"), "wire_api":"responses"}, "profiles.cc_switch_manual.model_provider":"cc_switch_manual", "model_catalog_json":home.join(".codex/cc-switch-manual-models.json")}) });
-                note = "保留默认模型和默认 Provider，新增 cc_switch_manual profile。需要使用网关时，手动运行 codex --profile cc_switch_manual；本页启动按钮仍只启动 codex。".into();
+                let mut changes = json!({"model_providers.cc_switch_manual": {"base_url": format!("{base}/v1"), "wire_api":"responses"}, "profiles.cc_switch_manual.model_provider":"cc_switch_manual", "model_catalog_json":catalog_str});
+                if let Some(existing) = &taken_over {
+                    changes["model_catalog_json_原值"] = json!(existing);
+                }
+                files.push(FileChange {
+                    path,
+                    before,
+                    after: config.to_string().into_bytes(),
+                    summary: changes,
+                });
+                note = match &taken_over {
+                    Some(existing) => format!(
+                        "确认即一键接入 Codex：写入 {CODEX_PROFILE} profile，并把 model_catalog_json 从 {existing} 改写为 LumaGate 的模型目录。原目录的模型列表将不再生效；旧配置会备份成 .bak，可还原。接入后点「启动 Codex」即自动带 profile 走网关。"
+                    ),
+                    None => format!(
+                        "确认即一键接入 Codex：写入 {CODEX_PROFILE} profile 与模型目录。默认 Provider 与默认模型不变，只有显式选 profile 才走网关。接入后点「启动 Codex」即自动带 profile 走网关。"
+                    ),
+                };
             }
         }
         Ok(Self {
@@ -454,5 +510,60 @@ mod tests {
         let target = tempfile::tempdir().unwrap();
         std::os::unix::fs::symlink(target.path(), home.join(".claude")).unwrap();
         assert!(Plan::build(&home, &document(), Agent::Claude, "http://127.0.0.1:15722").is_err());
+    }
+
+    /// 已有别的工具管理 model_catalog_json 时，不拒绝同步，而是把改写意图
+    /// 放进预览，让用户在确认框里决定是否覆盖。
+    #[test]
+    fn foreign_model_catalog_is_surfaced_for_overwrite_confirmation() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().canonicalize().unwrap();
+        fs::create_dir_all(home.join(".codex")).unwrap();
+        let foreign = home.join(".codex/other-tool-models.json");
+        fs::write(
+            home.join(".codex/config.toml"),
+            format!("model_catalog_json = \"{}\"\n", foreign.display()),
+        )
+        .unwrap();
+        let plan = Plan::build(&home, &document(), Agent::Codex, "http://127.0.0.1:15722").unwrap();
+        let preview = plan.preview();
+        let serialized = serde_json::to_string(&preview).unwrap();
+        assert!(
+            serialized.contains(&foreign.display().to_string()),
+            "预览必须点名被改写的原目录，否则用户无法判断是否覆盖：{serialized}"
+        );
+        assert!(!home.join(".codex/cc-switch-manual-models.json").exists());
+        assert!(fs::read_to_string(home.join(".codex/config.toml"))
+            .unwrap()
+            .contains("other-tool-models.json"));
+    }
+
+    #[test]
+    fn codex_gateway_launch_uses_profile_only_once_installed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().canonicalize().unwrap();
+        assert!(!gateway_profile_ready(&home, Agent::Codex));
+        assert_eq!(Agent::Codex.command(), "codex");
+        assert_eq!(Agent::Codex.gateway_command(), "codex --profile cc_switch_manual");
+        // Pi/Claude 的连接写在各自配置里，启动命令不需要 profile。
+        assert!(gateway_profile_ready(&home, Agent::Pi));
+        assert!(gateway_profile_ready(&home, Agent::Claude));
+        assert_eq!(Agent::Pi.gateway_command(), Agent::Pi.command());
+
+        fs::create_dir_all(home.join(".codex")).unwrap();
+        fs::write(home.join(".codex/config.toml"), "[profiles.other]\nmodel_provider = \"x\"\n")
+            .unwrap();
+        assert!(
+            !gateway_profile_ready(&home, Agent::Codex),
+            "别的 profile 不算网关接入"
+        );
+        Plan::build(&home, &document(), Agent::Codex, "http://127.0.0.1:15722")
+            .unwrap()
+            .apply(0)
+            .unwrap();
+        assert!(
+            gateway_profile_ready(&home, Agent::Codex),
+            "接入后启动必须自动带网关 profile"
+        );
     }
 }
