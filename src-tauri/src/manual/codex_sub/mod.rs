@@ -301,7 +301,16 @@ impl Manager {
                 .connect_timeout(Duration::from_secs(10))
                 .timeout(Duration::from_secs(30))
                 .build()
-                .expect("Codex OAuth HTTP client"),
+                .unwrap_or_else(|err| {
+                    log::warn!("[CodexSub] 默认 HTTP 客户端初始化失败，回退直连模式: {err}");
+                    reqwest::Client::builder()
+                        .no_proxy()
+                        .redirect(reqwest::redirect::Policy::none())
+                        .connect_timeout(Duration::from_secs(10))
+                        .timeout(Duration::from_secs(30))
+                        .build()
+                        .expect("Codex OAuth fallback HTTP client")
+                }),
             state: Mutex::new(State {
                 credential: loaded,
                 load_error: failed,

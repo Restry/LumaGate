@@ -5,12 +5,16 @@
       {
         "label": "main",
         "title": "枢光 · LumaGate",
-        "width": 1200,
-        "height": 800,
-        "titleBarStyle": "Visible",
+        "center": true,
+        "decorations": false,
+        "shadow": true,
+        "resizable": true,
+        "fullscreen": false,
+        "width": 1140,
+        "height": 760,
         "visible": false,
-        "minWidth": 900,
-        "minHeight": 600
+        "minWidth": 880,
+        "minHeight": 580
       }
     ]
   }

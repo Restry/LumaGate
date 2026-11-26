@@ -1187,19 +1187,75 @@ pub(crate) fn context() -> tauri::Context<tauri::Wry> {
     tauri::generate_context!()
 }
 
+fn report_startup_error(title: &str, detail: &str) {
+    eprintln!("{title}: {detail}");
+    let log_dir = crate::config::get_app_config_dir();
+    let _ = std::fs::create_dir_all(&log_dir);
+    let log_path = log_dir.join("startup-error.log");
+    let entry = format!(
+        "[{}] v{} ({}/{}) {title}: {detail}\n",
+        chrono::Utc::now().to_rfc3339(),
+        env!("CARGO_PKG_VERSION"),
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+    );
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+    {
+        use std::io::Write;
+        let _ = f.write_all(entry.as_bytes());
+    }
+    let message = format!("{detail}\n\n诊断日志：{}", log_path.display());
+    #[cfg(target_os = "macos")]
+    let _ = std::process::Command::new("osascript")
+        .args([
+            "-e",
+            "on run argv\n display alert (item 1 of argv) message (item 2 of argv) as critical\nend run",
+            title,
+            &message,
+        ])
+        .status();
+    #[cfg(target_os = "windows")]
+    {
+        #[link(name = "user32")]
+        extern "system" {
+            fn MessageBoxW(
+                hwnd: *mut std::ffi::c_void,
+                text: *const u16,
+                caption: *const u16,
+                utype: u32,
+            ) -> i32;
+        }
+        let mut caption: Vec<u16> = title.encode_utf16().collect();
+        caption.push(0);
+        let mut body: Vec<u16> = message.encode_utf16().collect();
+        body.push(0);
+        const MB_OK_ICONERROR: u32 = 0x0000_0010;
+        unsafe {
+            MessageBoxW(
+                std::ptr::null_mut(),
+                body.as_ptr(),
+                caption.as_ptr(),
+                MB_OK_ICONERROR,
+            );
+        }
+    }
+}
+
 pub fn run() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    crate::panic_hook::init_app_config_dir(crate::config::get_app_config_dir());
+    crate::panic_hook::setup_panic_hook();
     let _instance = match migration::prepare(&crate::config::get_home_dir()) {
         Ok(guard) => guard,
         Err(error) => {
-            eprintln!("LumaGate 数据迁移未完成：{error}");
-            #[cfg(target_os = "macos")]
-            let _ = std::process::Command::new("osascript")
-                .args(["-e", "on run argv\n display alert \"LumaGate 无法安全打开数据\" message (item 1 of argv) as critical\nend run", &error.to_string()])
-                .status();
+            report_startup_error("LumaGate 无法安全打开数据", &error.to_string());
             return;
         }
     };
-    tauri::Builder::default()
+    let app = match tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let db = Arc::new(Database::init()?);
@@ -1299,12 +1355,18 @@ pub fn run() {
             manual_launch
         ])
         .build(context())
-        .expect("无法启动 LumaGate")
-        .run(|app, event| {
-            if matches!(event, tauri::RunEvent::Exit)
-                && app.state::<ManualState>().current_logs().flush().is_err()
-            {
-                log::error!("退出前调用日志未能全部保存，请检查日志存储");
-            }
-        });
+    {
+        Ok(app) => app,
+        Err(error) => {
+            report_startup_error("无法启动 LumaGate", &error.to_string());
+            return;
+        }
+    };
+    app.run(|app, event| {
+        if matches!(event, tauri::RunEvent::Exit)
+            && app.state::<ManualState>().current_logs().flush().is_err()
+        {
+            log::error!("退出前调用日志未能全部保存，请检查日志存储");
+        }
+    });
 }

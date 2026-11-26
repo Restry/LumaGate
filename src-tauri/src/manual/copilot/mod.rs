@@ -129,7 +129,16 @@ impl Manager {
                 .connect_timeout(Duration::from_secs(10))
                 .timeout(Duration::from_secs(30))
                 .build()
-                .expect("Copilot HTTP client"),
+                .unwrap_or_else(|err| {
+                    log::warn!("[Copilot] 默认 HTTP 客户端初始化失败，回退直连模式: {err}");
+                    reqwest::Client::builder()
+                        .no_proxy()
+                        .redirect(reqwest::redirect::Policy::none())
+                        .connect_timeout(Duration::from_secs(10))
+                        .timeout(Duration::from_secs(30))
+                        .build()
+                        .expect("Copilot fallback HTTP client")
+                }),
             state: Mutex::new(State {
                 credential: loaded,
                 access: None,

@@ -33,9 +33,20 @@ fn lock(path: &Path) -> io::Result<File> {
         options.mode(0o600);
     }
     let file = options.open(path)?;
-    file.try_lock()
-        .map_err(|_| io::Error::other("LumaGate 或旧版本仍在运行，请退出后重试"))?;
-    Ok(file)
+    for attempt in 0..12 {
+        match file.try_lock() {
+            Ok(()) => return Ok(file),
+            Err(_) if attempt < 11 => {
+                std::thread::sleep(std::time::Duration::from_millis(250));
+            }
+            Err(_) => {
+                return Err(io::Error::other(
+                    "LumaGate 或旧版本仍在运行，请退出后重试",
+                ));
+            }
+        }
+    }
+    unreachable!()
 }
 fn exists(path: &Path) -> io::Result<bool> {
     match path.symlink_metadata() {
@@ -99,7 +110,8 @@ fn copy_tree(from: &Path, to: &Path) -> io::Result<()> {
         }
     } else if meta.is_file() {
         fs::copy(from, to)?;
-        File::open(to)?.sync_all()?;
+        // Windows `FlushFileBuffers` (`sync_all`) requires GENERIC_WRITE; opening read-only fails with ERROR_ACCESS_DENIED.
+        OpenOptions::new().write(true).open(to)?.sync_all()?;
     } else {
         return Err(io::Error::other("拒绝复制特殊文件"));
     }
