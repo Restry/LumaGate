@@ -450,14 +450,18 @@ impl Manager {
             .await?;
         let mut copy = source.clone();
         copy.base_url = base;
-        let mut upstream = super::catalog::upstream_provider_with_key(&copy, model, app, &token)?;
+        let slug = upstream_id(model)?.to_string();
+        let mut upstream_model = model.clone();
+        upstream_model.id = slug.clone();
+        let mut upstream =
+            super::catalog::upstream_provider_with_key(&copy, &upstream_model, app, &token)?;
         upstream.settings_config["manual_credential_version"] =
             json!(super::catalog::deployment_version(source, model));
         upstream.settings_config["manual_copilot_token"] = json!(token);
         upstream.settings_config[crate::proxy::providers::native_responses_identity::ENABLED] = json!(
             matches!(model.protocol_override, Some(Protocol::OpenaiResponses))
         );
-        upstream.settings_config["manual_upstream_model"] = json!(upstream_id(model)?);
+        upstream.settings_config["manual_upstream_model"] = json!(slug);
         if let Some(efforts) = super::metadata::effective_reasoning_levels(model) {
             upstream.settings_config["manual_supported_reasoning_efforts"] = json!(efforts);
         }

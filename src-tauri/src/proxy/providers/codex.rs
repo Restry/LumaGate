@@ -445,7 +445,8 @@ pub fn resolve_codex_catalog_tool_profile(
 pub fn codex_provider_upstream_model(provider: &Provider) -> Option<String> {
     provider
         .settings_config
-        .get("model")
+        .get("manual_upstream_model")
+        .or_else(|| provider.settings_config.get("model"))
         .and_then(|v| v.as_str())
         .map(str::trim)
         .filter(|model| !model.is_empty())

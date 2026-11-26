@@ -667,3 +667,39 @@ fn copilot_parse_models_extracts_reasoning_effort_capabilities() {
     );
     assert_eq!(models[0].default_reasoning_level.as_deref(), Some("medium"));
 }
+
+#[tokio::test]
+async fn copilot_chat_model_strips_prefix_for_codex_responses_to_chat_conversion() {
+    let dir = tempfile::tempdir().unwrap();
+    let manager = Manager::new(dir.path().join("copilot"));
+    let db = Database::memory().unwrap();
+    let mut doc = Document::default();
+    doc.save(&db).unwrap();
+    let auth = ready(&manager, doc.revision).await;
+    commands::link(&manager, &db, "flow-fixture", auth)
+        .await
+        .unwrap();
+    let doc = Document::load(&db).unwrap();
+    let source = &doc.providers[0];
+    let model = Model {
+        id: "copilot/gemini-4-argon".into(),
+        protocol_override: Some(Protocol::OpenaiChat),
+        enabled: true,
+        ..Model::default()
+    };
+
+    let upstream = manager.provider(source, &model, "codex").await.unwrap();
+    assert_eq!(upstream.settings_config["model"], "gemini-4-argon");
+    assert_eq!(
+        upstream.settings_config["manual_upstream_model"],
+        "gemini-4-argon"
+    );
+    assert!(crate::proxy::providers::should_convert_codex_responses_to_chat(
+        &upstream,
+        "/responses"
+    ));
+
+    let mut body = json!({"model": "copilot/gemini-4-argon", "input": "hi"});
+    crate::proxy::providers::apply_codex_chat_upstream_model(&upstream, &mut body);
+    assert_eq!(body["model"], "gemini-4-argon");
+}
