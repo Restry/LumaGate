@@ -699,7 +699,7 @@ impl Manager {
         let (token, account_id) = self.resolve(binding).await?;
         let slug = upstream_id(model)?;
         let version = super::catalog::deployment_version(source, model);
-        let config = if app == "claude" {
+        let mut config = if app == "claude" {
             json!({
                 "env": {
                     "ANTHROPIC_BASE_URL": self.api_root,
@@ -724,6 +724,9 @@ impl Manager {
                 "manual_codex_account_id": account_id,
             })
         };
+        if let Some(efforts) = super::metadata::effective_reasoning_levels(model) {
+            config["manual_supported_reasoning_efforts"] = json!(efforts);
+        }
         let meta = if app == "claude" {
             Some(crate::provider::ProviderMeta {
                 provider_type: Some("codex_oauth".into()),

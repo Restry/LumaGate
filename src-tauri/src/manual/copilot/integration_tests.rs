@@ -628,3 +628,42 @@ fn native_messages_are_preserved_and_ordinary_sources_cannot_claim_the_copilot_n
     .validate()
     .is_err());
 }
+
+#[test]
+fn copilot_parse_models_extracts_reasoning_effort_capabilities() {
+    let models = parse_models(&json!({
+        "data": [{
+            "id": "gpt-6.1-sol",
+            "name": "GPT-6.1-sol",
+            "model_picker_enabled": true,
+            "supported_endpoints": ["/responses"],
+            "capabilities": {
+                "type": "chat",
+                "supports": {
+                    "reasoning_effort": ["low", "medium", "high", "xhigh", "max"],
+                    "tool_calls": true,
+                    "vision": true
+                },
+                "limits": {
+                    "max_context_window_tokens": 400000,
+                    "max_output_tokens": 128000
+                }
+            }
+        }]
+    }))
+    .unwrap();
+    assert_eq!(models.len(), 1);
+    assert_eq!(models[0].id, "copilot/gpt-6.1-sol");
+    assert_eq!(models[0].reasoning, Some(true));
+    assert_eq!(
+        models[0].reasoning_levels,
+        Some(vec![
+            "low".into(),
+            "medium".into(),
+            "high".into(),
+            "xhigh".into(),
+            "max".into(),
+        ])
+    );
+    assert_eq!(models[0].default_reasoning_level.as_deref(), Some("medium"));
+}

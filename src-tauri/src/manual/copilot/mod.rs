@@ -458,6 +458,9 @@ impl Manager {
             matches!(model.protocol_override, Some(Protocol::OpenaiResponses))
         );
         upstream.settings_config["manual_upstream_model"] = json!(upstream_id(model)?);
+        if let Some(efforts) = super::metadata::effective_reasoning_levels(model) {
+            upstream.settings_config["manual_supported_reasoning_efforts"] = json!(efforts);
+        }
         Ok(upstream)
     }
     pub async fn test(&self, source: &Source, model: &Model) -> Result<(), String> {
@@ -714,6 +717,22 @@ fn parse_models(value: &Value) -> Result<Vec<Model>, String> {
                 .filter(|n| *n > 0 && *n <= 9_007_199_254_740_991)
         };
         let vision = flag("vision");
+        let reasoning_levels: Option<Vec<String>> = raw
+            .pointer("/capabilities/supports/reasoning_effort")
+            .and_then(Value::as_array)
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(Value::as_str)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>()
+            })
+            .filter(|v| !v.is_empty());
+        let default_reasoning_level = reasoning_levels
+            .as_deref()
+            .and_then(|l| super::metadata::default_reasoning_effort(l, None));
+        let reasoning = flag("reasoning")
+            .or_else(|| reasoning_levels.as_ref().map(|v| !v.is_empty()));
         models.push(Model {
             id: format!("copilot/{id}"),
             name: raw["name"].as_str().map(str::to_owned),
@@ -729,7 +748,9 @@ fn parse_models(value: &Value) -> Result<Vec<Model>, String> {
                 }
             }),
             tools: flag("tool_calls"),
-            reasoning: flag("reasoning"),
+            reasoning,
+            reasoning_levels,
+            default_reasoning_level,
             metadata: raw.clone(),
             enabled: true,
             ..Model::default()

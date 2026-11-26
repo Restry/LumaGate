@@ -96,6 +96,7 @@ pub fn parse_model(row: &Value, enabled: bool) -> Result<Model, String> {
             "/capabilities/reasoning/levels",
             "/capabilities/thinking/levels",
             "/capabilities/effort/levels",
+            "/capabilities/supports/reasoning_effort",
         ],
     );
     let mut reasoning = boolean(
@@ -255,6 +256,40 @@ pub fn pi_model(model: &Model, id: &str) -> Value {
     value
 }
 
+pub fn effective_reasoning_levels(model: &Model) -> Option<Vec<String>> {
+    if let Some(levels) = &model.reasoning_levels {
+        if !levels.is_empty() {
+            return Some(levels.clone());
+        }
+    }
+    strings(
+        &model.metadata,
+        &[
+            "/capabilities/supports/reasoning_effort",
+            "/supported_reasoning_levels",
+            "/supported_reasoning_efforts",
+            "/reasoning_levels",
+            "/reasoning_efforts",
+        ],
+    )
+    .filter(|v| !v.is_empty())
+}
+
+pub fn default_reasoning_effort(levels: &[String], declared: Option<&str>) -> Option<String> {
+    const VALID: &[&str] = &["none", "minimal", "low", "medium", "high", "xhigh", "max"];
+    if let Some(d) = declared {
+        if levels.iter().any(|v| v == d) && VALID.contains(&d) {
+            return Some(d.to_string());
+        }
+    }
+    for candidate in ["medium", "low", "high", "xhigh", "max", "minimal", "none"] {
+        if levels.iter().any(|v| v == candidate) {
+            return Some(candidate.to_string());
+        }
+    }
+    None
+}
+
 pub fn enrich_codex_entry(entry: &mut Value, model: &Model) {
     if let Some(object) = entry.as_object_mut() {
         object.remove("context_window");
@@ -264,6 +299,8 @@ pub fn enrich_codex_entry(entry: &mut Value, model: &Model) {
         entry["context_window"] = json!(context);
         entry["max_context_window"] = json!(context);
     }
+    // LumaGate 本地代理只提供 HTTP SSE，不提供 WebSocket，避免 Codex 每次先试 ws:// 打 405。
+    entry["prefer_websockets"] = json!(false);
     entry["supports_reasoning_summaries"] = json!(model.reasoning_summaries.unwrap_or(false));
     entry["input_modalities"] = json!(client_input(model));
     // 目录缺字段时不能沿用上游模板的推理档位，否则会凭空宣称 low/medium/high。
@@ -272,21 +309,106 @@ pub fn enrich_codex_entry(entry: &mut Value, model: &Model) {
         object.remove("supported_reasoning_levels");
     }
     entry["supported_reasoning_levels"] = json!([]);
-    if let Some(levels) = &model.reasoning_levels {
-        entry["supported_reasoning_levels"] = json!(levels
+    if let Some(levels) = effective_reasoning_levels(model) {
+        const ORDER: &[&str] = &["none", "minimal", "low", "medium", "high", "xhigh", "max"];
+        let valid: Vec<String> = ORDER
             .iter()
-            .filter(
-                |v| ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
-                    .contains(&v.as_str())
-            )
+            .filter(|v| levels.iter().any(|l| l == *v))
+            .map(|v| (*v).to_string())
+            .collect();
+        entry["supported_reasoning_levels"] = json!(valid
+            .iter()
             .map(|v| json!({"effort":v,"description":v}))
             .collect::<Vec<_>>());
-        if let Some(default) = &model.default_reasoning_level {
-            if levels.contains(default)
-                && ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
-                    .contains(&default.as_str())
-            {
-                entry["default_reasoning_level"] = json!(default);
+        if let Some(default) =
+            default_reasoning_effort(&valid, model.default_reasoning_level.as_deref())
+        {
+            entry["default_reasoning_level"] = json!(default);
+        }
+    }
+}
+
+/// 当客户端（如 Codex）发出的 `reasoning.effort` 或 `reasoning_effort` 不在目标模型声明的支持集合内时：
+/// - 若请求 `"none"` 但模型不支持关闭推理，则移除 `effort`（若 `reasoning` 对象变空则移除整个字段），由上游使用默认档位；
+/// - 若请求其他越界档位（如 `"ultra"` / `"xhigh"` / `"minimal"`），自动夹紧到最接近的受支持档位，避免上游返回 HTTP 400。
+pub fn normalize_reasoning_effort(provider: &crate::provider::Provider, body: &mut Value) {
+    let Some(supported) = provider
+        .settings_config
+        .get("manual_supported_reasoning_efforts")
+        .and_then(Value::as_array)
+    else {
+        return;
+    };
+    let supported: Vec<&str> = supported.iter().filter_map(Value::as_str).collect();
+    if supported.is_empty() {
+        return;
+    }
+
+    const RANK: &[&str] = &["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
+    let adapt = |requested: &str| -> Option<Option<&'static str>> {
+        if supported.iter().any(|s| s.eq_ignore_ascii_case(requested)) {
+            return None; // 已受支持，保持原样
+        }
+        if requested.eq_ignore_ascii_case("none") {
+            return Some(None); // 移除 effort，交由上游默认推理档位
+        }
+        let req_rank = RANK
+            .iter()
+            .position(|r| r.eq_ignore_ascii_case(requested))?;
+        // 优先向下夹紧到最高可用档位（如 ultra -> max, xhigh -> high）
+        for &cand in RANK[..=req_rank].iter().rev() {
+            if supported.iter().any(|s| s.eq_ignore_ascii_case(cand)) {
+                return Some(Some(cand));
+            }
+        }
+        // 否则向上取最低可用档位（如 minimal -> low）
+        for &cand in &RANK[req_rank + 1..] {
+            if supported.iter().any(|s| s.eq_ignore_ascii_case(cand)) {
+                return Some(Some(cand));
+            }
+        }
+        Some(None)
+    };
+
+    if let Some(reasoning) = body.get_mut("reasoning").and_then(Value::as_object_mut) {
+        if let Some(requested) = reasoning
+            .get("effort")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+        {
+            if let Some(replacement) = adapt(&requested) {
+                match replacement {
+                    Some(effort) => {
+                        reasoning.insert("effort".into(), json!(effort));
+                    }
+                    None => {
+                        reasoning.remove("effort");
+                    }
+                }
+            }
+        }
+        if reasoning.is_empty() {
+            if let Some(root) = body.as_object_mut() {
+                root.remove("reasoning");
+            }
+        }
+    }
+
+    if let Some(root) = body.as_object_mut() {
+        if let Some(requested) = root
+            .get("reasoning_effort")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+        {
+            if let Some(replacement) = adapt(&requested) {
+                match replacement {
+                    Some(effort) => {
+                        root.insert("reasoning_effort".into(), json!(effort));
+                    }
+                    None => {
+                        root.remove("reasoning_effort");
+                    }
+                }
             }
         }
     }
@@ -358,15 +480,33 @@ mod tests {
             providers: vec![make("a", &row), make("b", &other)],
             ..Document::default()
         };
-        assert_eq!(doc.groups().len(), 1);
+        let groups = doc.groups();
+        assert_eq!(groups.len(), 2);
         let directory = public_models(&doc);
-        assert_eq!(directory["data"][0]["context_window"], 262144);
-        assert_eq!(directory["data"][0]["max_output_tokens"], 64000);
-        assert_eq!(directory["data"][0]["reasoning"], true);
+        let a_entry = directory["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["id"] == "a/same-model")
+            .unwrap();
+        let b_entry = directory["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["id"] == "b/same-model")
+            .unwrap();
+        assert_eq!(a_entry["context_window"], 262144);
+        assert_eq!(a_entry["max_output_tokens"], 64000);
+        assert_eq!(a_entry["reasoning"], true);
+        assert_eq!(b_entry["context_window"], 262144);
         doc.providers[1].models[0].reasoning_levels = Some(vec!["high".into()]);
-        assert_eq!(doc.groups().len(), 1);
         assert_eq!(
-            doc.groups()[0].model.reasoning_levels,
+            doc.groups()
+                .iter()
+                .find(|g| g.public_id == "b/same-model")
+                .unwrap()
+                .model
+                .reasoning_levels,
             Some(vec!["high".into()])
         );
     }
@@ -409,5 +549,77 @@ mod tests {
         assert!(pi.get("headers").is_none());
         assert!(pi.get("apiKey").is_none());
         assert!(pi.get("samplingParams").is_none());
+    }
+
+    #[test]
+    fn copilot_capabilities_reasoning_effort_enriches_codex_and_normalizes_none() {
+        let mut model = Model {
+            id: "copilot/gpt-6.1-sol".into(),
+            enabled: true,
+            metadata: json!({
+                "id": "gpt-6.1-sol",
+                "capabilities": {
+                    "supports": {
+                        "reasoning_effort": ["low", "medium", "high", "xhigh", "max"]
+                    }
+                }
+            }),
+            ..Model::default()
+        };
+        // Even for legacy cached DB rows whose reasoning_levels is None, fallback reads metadata.
+        let mut codex = json!({"slug": "copilot/gpt-6.1-sol", "prefer_websockets": true});
+        enrich_codex_entry(&mut codex, &model);
+        assert_eq!(codex["prefer_websockets"], false);
+        assert_eq!(codex["default_reasoning_level"], "medium");
+        assert_eq!(
+            codex["supported_reasoning_levels"]
+                .as_array()
+                .unwrap()
+                .len(),
+            5
+        );
+
+        let provider = crate::provider::Provider::with_id(
+            "copilot-personal".into(),
+            "GitHub Copilot".into(),
+            json!({
+                "manual_supported_reasoning_efforts": effective_reasoning_levels(&model).unwrap()
+            }),
+            None,
+        );
+
+        // 1. Codex sending effort="none" to gpt-6.1-sol -> strips reasoning so upstream won't 400.
+        let mut body = json!({"model": "gpt-6.1-sol", "reasoning": {"effort": "none"}, "input": "hi"});
+        normalize_reasoning_effort(&provider, &mut body);
+        assert!(body.get("reasoning").is_none());
+
+        // 2. effort="none" with summary="auto" -> removes only effort, preserves summary.
+        let mut body2 = json!({"model": "gpt-6.1-sol", "reasoning": {"effort": "none", "summary": "auto"}});
+        normalize_reasoning_effort(&provider, &mut body2);
+        assert_eq!(body2["reasoning"], json!({"summary": "auto"}));
+
+        // 3. effort="ultra" (unsupported by Copilot) -> clamps down to "max".
+        let mut body3 = json!({"model": "gpt-6.1-sol", "reasoning": {"effort": "ultra"}});
+        normalize_reasoning_effort(&provider, &mut body3);
+        assert_eq!(body3["reasoning"]["effort"], "max");
+
+        // 4. Supported effort "high" passes through unchanged.
+        let mut body4 = json!({"model": "gpt-6.1-sol", "reasoning": {"effort": "high"}});
+        normalize_reasoning_effort(&provider, &mut body4);
+        assert_eq!(body4["reasoning"]["effort"], "high");
+
+        // 5. Model that explicitly supports "none" keeps "none" untouched.
+        model.reasoning_levels = Some(vec!["none".into(), "low".into(), "high".into()]);
+        let provider_with_none = crate::provider::Provider::with_id(
+            "copilot-personal".into(),
+            "GitHub Copilot".into(),
+            json!({
+                "manual_supported_reasoning_efforts": effective_reasoning_levels(&model).unwrap()
+            }),
+            None,
+        );
+        let mut body5 = json!({"model": "gpt-6-sol", "reasoning": {"effort": "none"}});
+        normalize_reasoning_effort(&provider_with_none, &mut body5);
+        assert_eq!(body5["reasoning"]["effort"], "none");
     }
 }

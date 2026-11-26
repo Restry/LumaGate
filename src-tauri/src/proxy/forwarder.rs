@@ -1324,6 +1324,7 @@ impl RequestForwarder {
         if let Some(model) = provider.settings_config.get("manual_upstream_model") {
             mapped_body["model"] = model.clone();
         }
+        crate::manual::metadata::normalize_reasoning_effort(provider, &mut mapped_body);
 
         // Grok Build exposes a stable client-side model profile in config.toml.
         // Route requests to the provider's real upstream model before applying

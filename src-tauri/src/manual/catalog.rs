@@ -744,6 +744,9 @@ pub fn upstream_provider_with_key(
     // 只存在请求快照里，绝不调用上游 ProviderService 的 live 写入路径。
     config["manual_upstream_model"] = json!(model.id);
     config["manual_credential_version"] = json!(version);
+    if let Some(efforts) = super::metadata::effective_reasoning_levels(model) {
+        config["manual_supported_reasoning_efforts"] = json!(efforts);
+    }
     // Azure AD：key 是 client_secret，转发器用它换 Bearer token，不再当 API Key 发出。
     if is_azure_ad(source) {
         config["azureTenantId"] = json!(source.azure_tenant_id.as_deref().unwrap_or_default());
