@@ -299,8 +299,8 @@ pub fn enrich_codex_entry(entry: &mut Value, model: &Model) {
         entry["context_window"] = json!(context);
         entry["max_context_window"] = json!(context);
     }
-    // LumaGate 本地代理只提供 HTTP SSE，不提供 WebSocket，避免 Codex 每次先试 ws:// 打 405。
-    entry["prefer_websockets"] = json!(false);
+    // LumaGate 本地代理已同时支持 HTTP SSE 与 WebSocket Responses 桥接。
+    entry["prefer_websockets"] = json!(true);
     entry["supports_reasoning_summaries"] = json!(model.reasoning_summaries.unwrap_or(false));
     entry["input_modalities"] = json!(client_input(model));
     // 目录缺字段时不能沿用上游模板的推理档位，否则会凭空宣称 low/medium/high。
@@ -567,9 +567,9 @@ mod tests {
             ..Model::default()
         };
         // Even for legacy cached DB rows whose reasoning_levels is None, fallback reads metadata.
-        let mut codex = json!({"slug": "copilot/gpt-6.1-sol", "prefer_websockets": true});
+        let mut codex = json!({"slug": "copilot/gpt-6.1-sol", "prefer_websockets": false});
         enrich_codex_entry(&mut codex, &model);
-        assert_eq!(codex["prefer_websockets"], false);
+        assert_eq!(codex["prefer_websockets"], true);
         assert_eq!(codex["default_reasoning_level"], "medium");
         assert_eq!(
             codex["supported_reasoning_levels"]

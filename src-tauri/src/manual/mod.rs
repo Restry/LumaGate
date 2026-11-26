@@ -24,6 +24,7 @@ pub mod sync;
 mod tests;
 pub mod token_usage;
 mod updater;
+pub mod ws_responses;
 
 use crate::{
     database::Database,

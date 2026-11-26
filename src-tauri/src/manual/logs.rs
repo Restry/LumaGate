@@ -427,17 +427,31 @@ impl Drop for CaptureBody {
     }
 }
 
+fn is_websocket_upgrade(request: &Request) -> bool {
+    request.method() == axum::http::Method::GET
+        && request
+            .headers()
+            .get(axum::http::header::UPGRADE)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|v| v.eq_ignore_ascii_case("websocket"))
+}
+
 pub async fn capture(
     State(logs): State<Arc<RequestLogs>>,
     request: Request,
     next: Next,
 ) -> Response {
+    // WebSocket 握手（HTTP 101）本身不产生模型调用日志；
+    // 连接建立后每轮 response.create 会经内部 POST /responses 单独记录完整日志。
+    if is_websocket_upgrade(&request) {
+        return next.run(request).await;
+    }
     let endpoint = match request.uri().path() {
-        "/v1/models" => "/v1/models",
+        "/v1/models" | "/backend-api/codex/models" => "/v1/models",
         "/v1/messages" => "/v1/messages",
         "/v1/chat/completions" => "/v1/chat/completions",
-        "/v1/responses" => "/v1/responses",
-        "/v1/responses/compact" => "/v1/responses/compact",
+        "/v1/responses" | "/backend-api/codex/responses" => "/v1/responses",
+        "/v1/responses/compact" | "/backend-api/codex/responses/compact" => "/v1/responses/compact",
         _ => "未知接口",
     }
     .to_owned();

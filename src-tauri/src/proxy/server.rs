@@ -400,8 +400,53 @@ impl ProxyServer {
 
     fn build_router(&self, manual_policy: Option<crate::manual::network::Settings>) -> Router {
         if let Some(policy) = manual_policy {
-            // 手动版不挂载会读取客户端 live 目录的上游 /models handler。
-            return Router::new()
+            let build_http_routes = || {
+                Router::new()
+                    .route("/v1/models", get(crate::manual::models))
+                    .route("/backend-api/codex/models", get(crate::manual::codex_models))
+                    .route("/v1/messages", post(handlers::handle_messages))
+                    .route(
+                        "/v1/chat/completions",
+                        post(handlers::handle_chat_completions),
+                    )
+                    .route("/v1/responses", post(handlers::handle_responses))
+                    .route(
+                        "/v1/responses/compact",
+                        post(handlers::handle_responses_compact),
+                    )
+                    .route(
+                        "/backend-api/codex/responses",
+                        post(handlers::handle_responses),
+                    )
+                    .route(
+                        "/backend-api/codex/responses/compact",
+                        post(handlers::handle_responses_compact),
+                    )
+            };
+            let apply_manual_layers = |router: Router<ProxyState>| {
+                router
+                    .layer(DefaultBodyLimit::max(8 * 1024 * 1024))
+                    .layer(axum::middleware::from_fn_with_state(
+                        crate::manual::network::Policy::new(policy.clone(), self.state.db.clone()),
+                        crate::manual::network::guard,
+                    ))
+                    .layer(axum::middleware::from_fn_with_state(
+                        self.manual_logs.clone(),
+                        crate::manual::logs::capture,
+                    ))
+                    .layer(axum::middleware::from_fn_with_state(
+                        self.manual_drain.clone(),
+                        crate::manual::drain::admission,
+                    ))
+                    .with_state(self.state.clone())
+            };
+
+            let internal_http_router = apply_manual_layers(build_http_routes());
+            let ws_bridge = crate::manual::ws_responses::WsBridgeState::new(internal_http_router);
+
+            // 手动版不挂载会读取客户端 live 目录的上游 /models handler；
+            // /v1/responses 与 /backend-api/codex/responses 同时支持 HTTP POST SSE 与 GET WebSocket。
+            let external = Router::new()
                 .route("/v1/models", get(crate::manual::models))
                 .route("/backend-api/codex/models", get(crate::manual::codex_models))
                 .route("/v1/messages", post(handlers::handle_messages))
@@ -409,33 +454,24 @@ impl ProxyServer {
                     "/v1/chat/completions",
                     post(handlers::handle_chat_completions),
                 )
-                .route("/v1/responses", post(handlers::handle_responses))
+                .route(
+                    "/v1/responses",
+                    post(handlers::handle_responses).get(crate::manual::ws_responses::handle_ws),
+                )
                 .route(
                     "/v1/responses/compact",
                     post(handlers::handle_responses_compact),
                 )
                 .route(
                     "/backend-api/codex/responses",
-                    post(handlers::handle_responses),
+                    post(handlers::handle_responses).get(crate::manual::ws_responses::handle_ws),
                 )
                 .route(
                     "/backend-api/codex/responses/compact",
                     post(handlers::handle_responses_compact),
                 )
-                .layer(DefaultBodyLimit::max(8 * 1024 * 1024))
-                .layer(axum::middleware::from_fn_with_state(
-                    crate::manual::network::Policy::new(policy, self.state.db.clone()),
-                    crate::manual::network::guard,
-                ))
-                .layer(axum::middleware::from_fn_with_state(
-                    self.manual_logs.clone(),
-                    crate::manual::logs::capture,
-                ))
-                .layer(axum::middleware::from_fn_with_state(
-                    self.manual_drain.clone(),
-                    crate::manual::drain::admission,
-                ))
-                .with_state(self.state.clone());
+                .layer(axum::Extension(ws_bridge));
+            return apply_manual_layers(external);
         }
         Router::new()
             // 健康检查

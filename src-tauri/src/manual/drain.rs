@@ -110,7 +110,13 @@ pub async fn admission(State(gate): State<Arc<Gate>>, request: Request, next: Ne
             return response;
         }
     };
-    let (parts, body) = next.run(request).await.into_parts();
+    let response = next.run(request).await;
+    // WebSocket 握手返回 101 Switching Protocols；必须原样透传以保留 OnUpgrade，
+    // 且不应在空闲长连接上占住排空锁（每轮实际请求会自行进入门禁）。
+    if response.status() == http::StatusCode::SWITCHING_PROTOCOLS {
+        return response;
+    }
+    let (parts, body) = response.into_parts();
     Response::from_parts(
         parts,
         Body::new(TrackedBody {
