@@ -195,6 +195,7 @@ async fn integration(
         azure_tenant_id: None,
         azure_client_id: None,
         copilot: None,
+        codex: None,
         protocol,
         enabled: true,
         cost_estimation_enabled: true,

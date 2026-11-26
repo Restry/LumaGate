@@ -37,9 +37,9 @@ export function ProviderModelPicker({
       aria-labelledby={`${prefix}-title`}
     >
       <div className="mg-model-picker-heading">
-        <h3 id={`${prefix}-title`}>启用模型</h3>
+        <h3 id={`${prefix}-title`}>部署候选</h3>
         <span role="status">
-          已启用 {enabled} / {models.length}
+          已纳入 {enabled} / {models.length}
         </span>
       </div>
       {models.length > 0 ? (
@@ -68,7 +68,7 @@ export function ProviderModelPicker({
               disabled={disabled || matches.length === 0}
               onClick={() => setMatches(true)}
             >
-              启用筛选结果
+              纳入筛选结果
             </ActionButton>
             <ActionButton
               type="button"
@@ -77,7 +77,7 @@ export function ProviderModelPicker({
               disabled={disabled || matches.length === 0}
               onClick={() => setMatches(false)}
             >
-              停用筛选结果
+              移出筛选结果
             </ActionButton>
           </div>
           <ul className="mg-model-picks" aria-label="Provider 模型选择">
@@ -95,11 +95,11 @@ export function ProviderModelPicker({
                     )}
                   </span>
                   <span className="mg-model-pick-state" aria-hidden>
-                    {model.enabled ? "已启用" : "已停用"}
+                    {model.enabled ? "已纳入" : "未纳入"}
                   </span>
                   <Switch
                     id={`${prefix}-${index}`}
-                    aria-label={`启用模型 ${model.id}`}
+                    aria-label={`模型 ${model.id} 纳入候选`}
                     checked={model.enabled}
                     disabled={disabled}
                     onCheckedChange={(enabled) =>

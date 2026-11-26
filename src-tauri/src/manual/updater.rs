@@ -609,6 +609,9 @@ mod tests {
             copilot: Arc::new(super::super::copilot::Manager::new(
                 directory.path().join("copilot"),
             )),
+            codex: Arc::new(super::super::codex_sub::Manager::new(
+                directory.path().join("codex"),
+            )),
             logs: Mutex::new(Arc::new(super::super::logs::RequestLogs::default())),
             drain: Arc::new(super::super::drain::Gate::default()),
             mutation: AsyncMutex::new(()),

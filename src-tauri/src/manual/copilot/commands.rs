@@ -81,6 +81,7 @@ pub(super) async fn link(
         azure_tenant_id: None,
         azure_client_id: None,
         copilot: Some(binding),
+        codex: None,
         protocol: Protocol::OpenaiChat,
         enabled: old.as_ref().map(|p| p.enabled).unwrap_or(true),
         cost_estimation_enabled: old.as_ref().is_none_or(|p| p.cost_estimation_enabled),

@@ -2,7 +2,7 @@ use crate::{database::Database, provider::Provider};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 pub const DOCUMENT_KEY: &str = "manual_gateway_v1";
 
@@ -93,6 +93,8 @@ pub struct Source {
     pub azure_client_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub copilot: Option<super::copilot::Binding>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex: Option<super::codex_sub::Binding>,
     pub protocol: Protocol,
     #[serde(default = "yes")]
     pub enabled: bool,
@@ -161,6 +163,10 @@ pub struct Document {
 pub struct Group {
     pub id: String,
     pub public_id: String,
+    /// 展示名。名称歧义时 public_id 会退回稳定路由哈希，界面永不使用它做标题。
+    pub display_name: String,
+    /// 组内各来源自己的模型 ID。跨 copilot/ 命名空间合并后不止一个。
+    pub model_ids: Vec<String>,
     pub model: Model,
     pub protocol: Protocol,
     pub protocol_mode: &'static str,
@@ -207,6 +213,72 @@ pub fn group_id(protocol: &Protocol, model: &Model) -> String {
     )
 }
 
+/// copilot/ 和 codex/ 只是内部命名空间，不是另一个模型。分组和展示都用去掉前缀的名字，
+/// 这样同一模型跨 API、Copilot 与 Codex 订阅落在同一组，界面也不会出现前缀或路由哈希。
+pub fn canonical_model_id(id: &str) -> &str {
+    id.strip_prefix("copilot/")
+        .or_else(|| id.strip_prefix("codex/"))
+        .filter(|s| !s.is_empty())
+        .unwrap_or(id)
+}
+
+pub fn source_prefix(source: &Source) -> String {
+    if source.codex.is_some() {
+        return "codex".into();
+    }
+    if source.copilot.is_some() {
+        return "copilot".into();
+    }
+    let mut slug = String::new();
+    let mut prev_dash = false;
+    for ch in source.name.trim().chars() {
+        if ch.is_ascii_alphanumeric() || ch == '.' || ch == '_' {
+            slug.push(ch.to_ascii_lowercase());
+            prev_dash = false;
+        } else if !slug.is_empty() && !prev_dash {
+            slug.push('-');
+            prev_dash = true;
+        }
+    }
+    let slug = slug.trim_matches('-').to_string();
+    if !slug.is_empty() {
+        return slug;
+    }
+    let fallback: String = source
+        .id
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .take(10)
+        .collect::<String>()
+        .to_ascii_lowercase();
+    if fallback.is_empty() {
+        "provider".into()
+    } else {
+        fallback
+    }
+}
+
+fn source_prefixes(providers: &[Source]) -> HashMap<String, String> {
+    let mut raw: Vec<(&Source, String)> = providers
+        .iter()
+        .map(|s| (s, source_prefix(s)))
+        .collect();
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    for (_, slug) in &raw {
+        *counts.entry(slug.clone()).or_default() += 1;
+    }
+    let mut out = HashMap::new();
+    for (source, slug) in raw.drain(..) {
+        let unique = if counts.get(&slug).copied().unwrap_or(0) > 1 {
+            format!("{slug}-{}", &hash(&source.id)[..4])
+        } else {
+            slug
+        };
+        out.insert(source.id.clone(), unique);
+    }
+    out
+}
+
 fn legacy_group_id(protocol: &Protocol, model: &Model) -> String {
     format!(
         "{}--{}",
@@ -230,11 +302,43 @@ pub fn resolve_group<'a>(groups: &'a [Group], id: &str) -> Option<&'a Group> {
     }
 }
 
+fn group_prefixed_name(group: &Group) -> &str {
+    if group.display_name.contains('/') {
+        &group.display_name
+    } else {
+        &group.model.id
+    }
+}
+
+fn group_prefers_prefix(group: &Group, bare_counts: &HashMap<String, usize>) -> bool {
+    if group.model.id.starts_with("codex/") || group.model.id.starts_with("copilot/") {
+        return true;
+    }
+    let bare = canonical_model_id(&group.model.id);
+    bare_counts.get(bare).copied().unwrap_or(0) > 1
+}
+
 fn public_name_index(groups: &[Group]) -> super::names::Names<'_> {
-    super::names::Names::new(groups.iter().map(|group| super::names::RouteName {
-        id: &group.id,
-        model: &group.model.id,
-        legacy: &group.legacy_ids,
+    let mut bare_counts: HashMap<String, usize> = HashMap::new();
+    for group in groups {
+        if !group.blocked {
+            *bare_counts
+                .entry(canonical_model_id(&group.model.id).to_string())
+                .or_default() += 1;
+        }
+    }
+    let metas: Vec<(&Group, bool)> = groups
+        .iter()
+        .map(|g| (g, group_prefers_prefix(g, &bare_counts)))
+        .collect();
+    super::names::Names::new(metas.into_iter().map(|(group, prefer_prefix)| {
+        super::names::RouteName {
+            id: &group.id,
+            model: &group.model.id,
+            prefixed: group_prefixed_name(group),
+            prefer_prefix,
+            legacy: &group.legacy_ids,
+        }
     }))
 }
 
@@ -270,60 +374,98 @@ impl Document {
         .map_err(|e| e.to_string())
     }
     pub fn groups(&self) -> Vec<Group> {
-        let mut groups: BTreeMap<String, Group> = BTreeMap::new();
+        // 不再跨 Provider 聚合：每个 Provider 的每个启用模型独立成组。
+        // 订阅来源（codex/、copilot/）始终带前缀；API 来源在与其他来源同名时自动加 <provider>/<model> 前缀。
+        let prefixes = source_prefixes(&self.providers);
+        let mut route_counts: HashMap<(String, String), usize> = HashMap::new();
         for source in &self.providers {
             for model in &source.models {
-                // 屏蔽记录仍用于识别后备引用，但不会进入公开目录或路由。
                 if !self.blocked_models.contains(&model.id) && (!source.enabled || !model.enabled) {
                     continue;
                 }
                 let protocol = super::endpoints::protocol(model);
-                let id = group_id(&protocol, model);
-                let aliases = [
+                *route_counts
+                    .entry((model.id.clone(), protocol.format().to_string()))
+                    .or_default() += 1;
+            }
+        }
+
+        let mut groups: BTreeMap<(String, String, String), Group> = BTreeMap::new();
+        for source in &self.providers {
+            let prefix = prefixes
+                .get(&source.id)
+                .cloned()
+                .unwrap_or_else(|| source_prefix(source));
+            for model in &source.models {
+                if !self.blocked_models.contains(&model.id) && (!source.enabled || !model.enabled) {
+                    continue;
+                }
+                let protocol = super::endpoints::protocol(model);
+                let canonical = canonical_model_id(&model.id);
+                let prefixed = format!("{prefix}/{canonical}");
+                let base_id = group_id(&protocol, model);
+                let shared_route = route_counts
+                    .get(&(model.id.clone(), protocol.format().to_string()))
+                    .copied()
+                    .unwrap_or(0)
+                    > 1;
+                let id = if shared_route {
+                    format!(
+                        "{prefixed}--{}",
+                        &hash(&format!(
+                            "source-route|{}|{}|{}",
+                            source.id,
+                            model.id,
+                            protocol.format()
+                        ))[..10]
+                    )
+                } else {
+                    base_id.clone()
+                };
+                let mut legacy_ids = vec![];
+                for alias in [
+                    base_id,
                     legacy_group_id(&protocol, model),
                     legacy_group_id(&source.protocol, model),
                     group_id(&source.protocol, model),
-                ];
+                ] {
+                    if alias != id && !legacy_ids.contains(&alias) {
+                        legacy_ids.push(alias);
+                    }
+                }
                 let mode = if model.protocol_override.is_some() {
                     "manual"
                 } else {
                     "auto"
                 };
-                let group = groups.entry(id.clone()).or_insert_with(|| Group {
+                let key = (
+                    prefixed.clone(),
+                    source.id.clone(),
+                    protocol.format().to_string(),
+                );
+                let mut model_copy = model.clone();
+                super::limits::apply(&mut model_copy);
+                let group = Group {
                     id,
                     public_id: String::new(),
-                    model: model.clone(),
+                    display_name: prefixed,
+                    model_ids: vec![model.id.clone()],
+                    model: model_copy,
                     protocol,
                     protocol_mode: mode,
                     automatic_protocol: super::endpoints::automatic_protocol(&model.id),
-                    legacy_ids: vec![],
+                    legacy_ids,
                     routing_error: None,
                     blocked: self.blocked_models.contains(&model.id),
-                    provider_ids: vec![],
-                    provider_names: vec![],
+                    provider_ids: vec![source.id.clone()],
+                    provider_names: vec![source.name.clone()],
                     policy: Policy::default(),
-                });
-                if group.protocol_mode != mode {
-                    group.protocol_mode = "mixed";
-                }
-                for alias in aliases {
-                    if alias != group.id && !group.legacy_ids.contains(&alias) {
-                        group.legacy_ids.push(alias);
-                    }
-                }
-                if !group.provider_ids.contains(&source.id) {
-                    if !group.provider_ids.is_empty() {
-                        super::aggregation::merge(&mut group.model, model);
-                    }
-                    group.provider_ids.push(source.id.clone());
-                    group.provider_names.push(source.name.clone());
-                }
+                };
+                groups.insert(key, group);
             }
         }
         let mut groups: Vec<_> = groups.into_values().collect();
         for group in &mut groups {
-            // Resolve original aliases first, then apply the explicit owner-specified limits.
-            super::limits::apply(&mut group.model);
             if let Some(policy) = self.policies.get(&group.id) {
                 group.policy = policy.clone();
                 continue;
@@ -350,6 +492,11 @@ impl Document {
             .map(|index| names.preferred(index).to_string())
             .collect();
         for (group, public_id) in groups.iter_mut().zip(preferred) {
+            // 展示名与对外模型名保持一致（不把路由哈希带上界面）：
+            // 若 public_id 退回路由哈希，保留干净的 prefixed 展示名。
+            if !public_id.contains("--") {
+                group.display_name = public_id.clone();
+            }
             group.public_id = public_id;
         }
         groups
@@ -392,6 +539,25 @@ impl Document {
                 }
             } else if source.models.iter().any(|m| m.id.starts_with("copilot/")) {
                 return Err("copilot/ 模型命名空间只供独立 Copilot 来源使用".into());
+            }
+            if let Some(binding) = &source.codex {
+                if source.id != super::codex_sub::PROVIDER_ID
+                    || source.base_url != super::codex_sub::API_ROOT
+                    || source.key_ref.is_some()
+                    || !source.key_env.is_empty()
+                    || binding.account_id.is_empty()
+                    || uuid::Uuid::parse_str(&binding.grant_id).is_err()
+                {
+                    return Err("Codex 订阅绑定或连接配置无效，请通过 Codex 订阅入口连接".into());
+                }
+                if source.models.iter().any(|m| {
+                    !m.id.starts_with("codex/")
+                        || m.protocol_override != Some(Protocol::OpenaiResponses)
+                }) {
+                    return Err("Codex 订阅目录或 Endpoint 无效，请刷新模型".into());
+                }
+            } else if source.models.iter().any(|m| m.id.starts_with("codex/")) {
+                return Err("codex/ 模型命名空间只供 Codex 订阅来源使用".into());
             }
             if let Some(reference) = &source.key_ref {
                 if uuid::Uuid::parse_str(reference).is_err() {
@@ -537,6 +703,9 @@ pub fn upstream_provider(source: &Source, model: &Model, app: &str) -> Result<Pr
     if source.copilot.is_some() {
         return Err("Copilot 需要由账号凭据解析器转发".into());
     }
+    if source.codex.is_some() {
+        return Err("Codex 订阅需要由订阅凭据解析器转发".into());
+    }
     upstream_provider_with_key(source, model, app, &credentials(source)?)
 }
 /// Azure AD Client Credentials 配置完整（租户 + 客户端）
@@ -625,6 +794,7 @@ mod tests {
             azure_tenant_id: None,
             azure_client_id: None,
             copilot: None,
+            codex: None,
             protocol: Protocol::OpenaiChat,
             enabled: true,
             cost_estimation_enabled: true,
@@ -702,104 +872,67 @@ mod tests {
         assert!(restored.providers[0].enabled);
     }
     #[test]
-    fn groups_exact_models_only() {
+    fn groups_keep_providers_separate_with_provider_prefix() {
         let mut doc = Document::default();
         doc.providers = vec![source("a"), source("b")];
-        assert_eq!(doc.groups().len(), 1);
-        assert_eq!(doc.groups()[0].provider_ids.len(), 2);
-        doc.providers[1].models[0].id = "model-a-20260101".into();
-        assert_eq!(doc.groups().len(), 2);
-        doc.providers[1].models[0].id = "model-a".into();
-        doc.providers[1].models[0].tools = Some(true);
-        assert_eq!(doc.groups().len(), 1);
-        assert_eq!(doc.groups()[0].model.tools, None);
-        doc.providers[1].models[0].tools = None;
-        doc.providers[1].protocol = Protocol::Anthropic;
-        assert_eq!(doc.groups().len(), 1);
-        doc.providers[1].models[0].protocol_override = Some(Protocol::Anthropic);
-        assert_eq!(doc.groups().len(), 2);
-    }
-    #[test]
-    fn same_model_merges_metadata_variants_and_keeps_stable_route() {
-        let mut doc = Document {
-            providers: vec![source("a"), source("b")],
-            ..Document::default()
-        };
-        let first = &mut doc.providers[0].models[0];
-        first.context_window = Some(1_000_000);
-        first.max_output_tokens = Some(128_000);
-        first.input_modalities = Some(vec!["image".into(), "text".into()]);
-        first.image = true;
-        first.metadata = json!({"context_length":1_000_000});
-        let old_ids: Vec<_> = doc
-            .providers
-            .iter()
-            .map(|p| {
-                let m = &p.models[0];
-                format!(
-                    "{}--{}",
-                    m.id,
-                    &hash(&format!("{}|{}", m.id, signature(&Protocol::OpenaiChat, m)))[..10]
-                )
-            })
-            .collect();
         let groups = doc.groups();
-        assert_eq!(groups.len(), 1);
-        let group = &groups[0];
-        assert_eq!(group.provider_ids, ["a", "b"]);
-        assert!(group.policy.failover);
-        assert_eq!(group.policy.balance, Balance::RoundRobin);
-        assert_eq!(group.model.context_window, None);
-        assert_eq!(
-            group.model.input_modalities,
-            Some(vec!["image".into(), "text".into()])
-        );
-        assert!(group.model.image);
-        assert!(group.model.metadata.is_null());
-        assert_eq!(
-            doc.providers[0].models[0].metadata["context_length"],
-            1_000_000
-        );
-        for old in &old_ids {
-            assert_eq!(resolve_group(&groups, old).unwrap().id, group.id);
-        }
-        let stable_id = group.id.clone();
-        doc.providers[1].models[0].context_window = Some(128_000);
-        assert_eq!(doc.groups()[0].id, stable_id);
-        assert_eq!(doc.groups()[0].model.context_window, Some(128_000));
-        doc.policies.insert(
-            old_ids[0].clone(),
-            Policy {
-                balance: Balance::Priority,
-                ..Policy::default()
-            },
-        );
-        assert_eq!(doc.groups()[0].policy.balance, Balance::Priority);
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].provider_ids, vec!["a"]);
+        assert_eq!(groups[1].provider_ids, vec!["b"]);
+        assert_eq!(groups[0].public_id, "a/model-a");
+        assert_eq!(groups[1].public_id, "b/model-a");
+        assert_eq!(groups[0].display_name, "a/model-a");
+        assert_eq!(groups[1].display_name, "b/model-a");
+
+        // Distinct model names on single API providers stay clean without forced prefix.
+        doc.providers[1].models[0].id = "model-a-20260101".into();
+        let groups = doc.groups();
+        assert_eq!(groups.len(), 2);
+        let pub_ids: Vec<&str> = groups.iter().map(|g| g.public_id.as_str()).collect();
+        assert!(pub_ids.contains(&"model-a"));
+        assert!(pub_ids.contains(&"model-a-20260101"));
     }
 
     #[test]
-    fn merged_model_advertises_only_common_capabilities() {
-        let mut doc = Document {
-            providers: vec![source("a"), source("b")],
-            ..Document::default()
-        };
-        for source in &mut doc.providers {
-            let m = &mut source.models[0];
-            m.context_window = Some(256_000);
-            m.max_output_tokens = Some(64_000);
-            m.reasoning = Some(true);
-            m.reasoning_levels = Some(vec!["high".into(), "low".into()]);
-            m.default_reasoning_level = Some("high".into());
-        }
-        doc.providers[1].models[0].max_output_tokens = Some(32_000);
-        doc.providers[1].models[0].reasoning_levels = Some(vec!["low".into()]);
+    fn codex_and_copilot_same_model_are_separate_and_prefixed() {
+        let mut doc = Document::default();
+        let mut codex = source("codex-subscription");
+        codex.name = "Codex 订阅".into();
+        codex.codex = Some(super::super::codex_sub::Binding {
+            account_id: "acct".into(),
+            grant_id: "grant".into(),
+        });
+        codex.models[0].id = "codex/gpt-6.1".into();
+        codex.models[0].protocol_override = Some(Protocol::OpenaiResponses);
+
+        let mut cp = source("copilot-personal");
+        cp.name = "GitHub Copilot".into();
+        cp.copilot = Some(super::super::copilot::Binding {
+            account_id: "123".into(),
+            grant_id: "grant".into(),
+        });
+        cp.models[0].id = "copilot/gpt-6.1".into();
+        cp.models[0].protocol_override = Some(Protocol::OpenaiResponses);
+
+        doc.providers = vec![codex, cp];
         let groups = doc.groups();
-        assert_eq!(groups.len(), 1);
-        assert_eq!(groups[0].model.max_output_tokens, Some(32_000));
-        assert_eq!(groups[0].model.reasoning_levels, Some(vec!["low".into()]));
-        assert_eq!(groups[0].model.default_reasoning_level, None);
-        doc.providers[1].models[0].reasoning = Some(false);
-        assert_eq!(doc.groups()[0].model.reasoning, Some(false));
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].public_id, "codex/gpt-6.1");
+        assert_eq!(groups[0].display_name, "codex/gpt-6.1");
+        assert_eq!(groups[0].provider_ids, vec!["codex-subscription"]);
+        assert_eq!(groups[1].public_id, "copilot/gpt-6.1");
+        assert_eq!(groups[1].display_name, "copilot/gpt-6.1");
+        assert_eq!(groups[1].provider_ids, vec!["copilot-personal"]);
+
+        assert_eq!(
+            resolve_public_group(&groups, "codex/gpt-6.1").unwrap().provider_ids,
+            vec!["codex-subscription"]
+        );
+        assert_eq!(
+            resolve_public_group(&groups, "copilot/gpt-6.1").unwrap().provider_ids,
+            vec!["copilot-personal"]
+        );
+        assert!(resolve_public_group(&groups, "gpt-6.1").is_none());
     }
 
     #[test]
@@ -817,5 +950,25 @@ mod tests {
         assert!(doc.validate().is_err());
         assert!(validate_url("http://example.com/v1").is_err());
         assert!(validate_url("https://example.com/v1?key=secret").is_err());
+    }
+
+    #[test]
+    fn colliding_same_model_across_two_providers_disambiguates_with_prefix() {
+        let mut doc = Document::default();
+        let mut chat = source("chat");
+        chat.models[0].id = "gpt-6-astra".into();
+        chat.models[0].protocol_override = Some(Protocol::OpenaiChat);
+        let mut responses = source("responses");
+        responses.models[0].id = "gpt-6-astra".into();
+        responses.models[0].protocol_override = Some(Protocol::OpenaiResponses);
+        doc.providers = vec![chat, responses];
+        let groups = doc.groups();
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].public_id, "chat/gpt-6-astra");
+        assert_eq!(groups[1].public_id, "responses/gpt-6-astra");
+        for group in &groups {
+            assert!(!group.display_name.contains("--"), "路由哈希不该上界面");
+            assert!(resolve_public_group(&groups, &group.public_id).is_some());
+        }
     }
 }

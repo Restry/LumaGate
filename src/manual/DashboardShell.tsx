@@ -1,19 +1,22 @@
 import { useEffect, useState, type ReactNode } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
-  Box,
+  Check,
   CircleHelp,
   Copy,
   FileClock,
   Layers3,
   LayoutDashboard,
+  Maximize2,
+  Minimize2,
+  Minus,
   Moon,
-  PanelLeftClose,
-  PanelLeftOpen,
   Play,
   Settings2,
   Square,
   SquareTerminal,
   Sun,
+  X,
 } from "lucide-react";
 import {
   Tooltip,
@@ -21,21 +24,38 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { ActionButton } from "./ui";
 import type { Snapshot } from "./types";
 import type { Workspace } from "./workspaces";
 import { version as appVersion } from "../../package.json";
 import brandMark from "./assets/lumagate-mark.svg";
 
-const navigation = [
-  { id: "overview", name: "概览", label: "概览", icon: LayoutDashboard },
+const primaryNav = [
+  { id: "overview", name: "首页", label: "概览", icon: LayoutDashboard },
+  { id: "sources", name: "Providers", label: "来源与模型", icon: Layers3 },
+  { id: "agents", name: "Agents", label: "客户端", icon: SquareTerminal },
   { id: "logs", name: "日志", label: "调用日志", icon: FileClock },
-  { id: "providers", name: "Provider", label: "Provider", icon: Layers3 },
-  { id: "models", name: "模型", label: "模型", icon: Box },
-  { id: "agents", name: "客户端", label: "客户端", icon: SquareTerminal },
+] as const;
+
+const utilityNav = [
   { id: "settings", name: "设置", label: "设置", icon: Settings2 },
   { id: "help", name: "帮助", label: "帮助", icon: CircleHelp },
 ] as const;
+
+const allNav = [...primaryNav, ...utilityNav] as const;
+
+function countConnectedAgents(snapshot: Snapshot | null): number {
+  const a = snapshot?.agents;
+  if (!a) return 0;
+  return [
+    a.codex?.connected,
+    a.claude?.connected,
+    a.pi?.connected,
+    a.opencode?.connected,
+    a.openclaw?.connected,
+    a.hermes?.connected,
+    a.droid?.connected,
+  ].filter(Boolean).length;
+}
 
 export function DashboardShell({
   snapshot,
@@ -56,7 +76,8 @@ export function DashboardShell({
   hasUpdate?: boolean;
   children: ReactNode;
 }) {
-  const [collapsed, setCollapsed] = useState(true);
+  const [copiedAddr, setCopiedAddr] = useState(false);
+  const [maximized, setMaximized] = useState(false);
   const [dark, setDark] = useState(() => {
     try {
       const saved = localStorage.getItem("manual.appearance");
@@ -67,180 +88,304 @@ export function DashboardShell({
       return document.documentElement.classList.contains("dark");
     }
   });
+
   useEffect(() => {
     document.documentElement.classList.toggle("dark", dark);
     try {
       localStorage.setItem("manual.appearance", dark ? "dark" : "light");
     } catch {
-      /* Appearance persistence is optional; never affect gateway state. */
+      /* Appearance persistence is optional */
     }
   }, [dark]);
-  const navigate = (next: Workspace) => {
-    onTab(next);
+
+  useEffect(() => {
+    let disposed = false;
+    try {
+      const win = getCurrentWindow();
+      void win
+        .isMaximized()
+        .then((v) => {
+          if (!disposed) setMaximized(v);
+        })
+        .catch(() => undefined);
+    } catch {
+      /* Browser / test environment without Tauri window */
+    }
+    return () => {
+      disposed = true;
+    };
+  }, []);
+
+  const handleMinimize = () => {
+    try {
+      void getCurrentWindow().minimize();
+    } catch {
+      /* noop outside Tauri */
+    }
   };
-  const item = (entry: (typeof navigation)[number]) => (
-    <Tooltip key={entry.id}>
-      <TooltipTrigger asChild>
-        <button
-          type="button"
-          className="mg-nav-item"
-          aria-label={entry.label}
-          aria-current={tab === entry.id ? "page" : undefined}
-          onClick={() => navigate(entry.id)}
-        >
-          <entry.icon size={17} aria-hidden />
-          <span>{entry.name}</span>
-          {entry.id === "settings" && hasUpdate && (
-            <i className="mg-nav-badge" aria-label="有可用更新" />
-          )}
-        </button>
-      </TooltipTrigger>
-      {collapsed && (
-        <TooltipContent side="right" className="mg-nav-tooltip">
-          {entry.name}
-        </TooltipContent>
-      )}
-    </Tooltip>
-  );
+  const handleToggleMaximize = async () => {
+    try {
+      const win = getCurrentWindow();
+      await win.toggleMaximize();
+      setMaximized(await win.isMaximized());
+    } catch {
+      /* noop outside Tauri */
+    }
+  };
+  const handleClose = () => {
+    try {
+      void getCurrentWindow().close();
+    } catch {
+      /* noop outside Tauri */
+    }
+  };
+  const handleTitlebarMouseDown = (
+    event: React.MouseEvent<HTMLElement>,
+  ) => {
+    if (event.button !== 0) return;
+    const target = event.target as HTMLElement | null;
+    if (
+      target?.closest("button, a, input, select, textarea, [role='button']")
+    ) {
+      return;
+    }
+    if (event.detail === 2) {
+      void handleToggleMaximize();
+      return;
+    }
+    if (target?.hasAttribute("data-tauri-drag-region")) {
+      return;
+    }
+    try {
+      void getCurrentWindow().startDragging();
+    } catch {
+      /* noop outside Tauri */
+    }
+  };
+
+  const running = !!snapshot?.status.running;
+  const endpointLabel = snapshot?.baseUrl
+    ? snapshot.baseUrl.replace(/^https?:\/\//, "")
+    : "127.0.0.1:15722";
+  const connectedAgents = countConnectedAgents(snapshot);
+  const activeProviders =
+    snapshot?.document.providers.filter((p) => p.enabled).length ?? 0;
+  const isWindows =
+    typeof navigator !== "undefined" && /Windows/i.test(navigator.userAgent);
+
+  const copyAddr = () => {
+    onCopyDirectory();
+    setCopiedAddr(true);
+    setTimeout(() => setCopiedAddr(false), 1500);
+  };
+
   return (
     <TooltipProvider delayDuration={250}>
       <div
-        className={`mg-app mg-dashboard-client ${collapsed ? "mg-sidebar-collapsed" : "mg-sidebar-expanded"}`}
+        className={`mg-app mg-dashboard-client mg-topchrome-shell ${isWindows ? "is-windows" : ""} ${maximized ? "is-maximized" : ""}`}
       >
         <a className="mg-skip-link" href="#manual-content">
           跳到工作区内容
         </a>
-        <div className="mg-dragbar" data-tauri-drag-region />
-        <div className="mg-layout">
-          <aside
-            className="mg-sidebar"
-            id="manual-sidebar"
-            aria-label="侧边导航"
-          >
-            <div className="mg-sidebar-top">
-              <button
-                className="mg-brand"
-                type="button"
-                aria-label="LumaGate 概览"
-                title="枢光 · LumaGate"
-                onClick={() => navigate("overview")}
-              >
-                <span className="mg-brand-mark">
-                  <img src={brandMark} alt="" aria-hidden />
-                </span>
-                <strong>LumaGate</strong>
-              </button>
-              <ActionButton
-                variant="ghost"
-                size="icon"
-                className="mg-sidebar-toggle"
-                aria-label={collapsed ? "展开侧栏" : "收起侧栏"}
-                title={collapsed ? "展开侧栏" : "收起侧栏"}
-                aria-controls="manual-sidebar"
-                aria-expanded={!collapsed}
-                onClick={() => setCollapsed((v) => !v)}
-              >
-                {collapsed ? (
-                  <PanelLeftOpen size={18} />
-                ) : (
-                  <PanelLeftClose size={18} />
-                )}
-              </ActionButton>
-            </div>
-            <div className="mg-sidebar-content">
-              <nav aria-label="工作区">
-                {navigation.slice(0, 5).map((entry, i) => (
-                  <div key={entry.id}>
-                    {i === 2 && (
-                      <span className="mg-nav-group-label">配置</span>
-                    )}
-                    {item(entry)}
-                  </div>
-                ))}
-              </nav>
-              <div className="mg-sidebar-foot">
-                <nav aria-label="辅助导航">{navigation.slice(5).map(item)}</nav>
-                <div className="mg-sidebar-gateway">
-                  <span
-                    className={`mg-status ${snapshot?.status.running ? "mg-status--running" : ""}`}
-                  >
-                    <i aria-hidden />
-                    {!snapshot
-                      ? "状态待读取"
-                      : snapshot.status.running
-                        ? "网关运行中"
-                        : "网关已停止"}
-                  </span>
-                  <code>{snapshot?.baseUrl ?? "—"}</code>
-                  <small>枢光 · {appVersion}</small>
-                </div>
-              </div>
-            </div>
-          </aside>
-          <section className="mg-workspace">
-            <header className="mg-header" data-tauri-drag-region>
-              <span className="mg-breadcrumb">
-                {navigation.find((n) => n.id === tab)?.name}
-              </span>
-              <div className="mg-header-actions">
-                <span
-                  className={`mg-header-status ${snapshot?.status.running ? "is-running" : ""}`}
+
+        {/* Custom frameless top titlebar & navigation bar */}
+        <header
+          className="mg-titlebar"
+          data-tauri-drag-region
+          onMouseDown={handleTitlebarMouseDown}
+        >
+          <div className="mg-titlebar-left" data-tauri-drag-region>
+            {!isWindows && (
+              <div className="mg-win-controls" aria-label="窗口控制">
+                <button
+                  type="button"
+                  className="mg-win-btn is-close"
+                  aria-label="关闭窗口"
+                  title="关闭"
+                  onClick={handleClose}
                 >
-                  <i aria-hidden />
-                  {!snapshot
-                    ? "状态待读取"
-                    : snapshot.status.running
-                      ? "网关运行中"
-                      : "网关已停止"}
-                </span>
-                <ActionButton
-                  variant="ghost"
-                  size="icon"
-                  disabled={!snapshot}
-                  aria-label="复制目录地址"
-                  title="复制目录地址"
-                  onClick={onCopyDirectory}
+                  <X size={8} strokeWidth={2.6} aria-hidden />
+                </button>
+                <button
+                  type="button"
+                  className="mg-win-btn is-min"
+                  aria-label="最小化窗口"
+                  title="最小化"
+                  onClick={handleMinimize}
                 >
-                  <Copy size={15} />
-                </ActionButton>
-                <ActionButton
-                  variant="ghost"
-                  size="icon"
-                  aria-label="切换外观"
-                  title="切换外观"
-                  onClick={() => setDark((v) => !v)}
+                  <Minus size={8} strokeWidth={2.6} aria-hidden />
+                </button>
+                <button
+                  type="button"
+                  className="mg-win-btn is-max"
+                  aria-label={maximized ? "还原窗口" : "最大化窗口"}
+                  title={maximized ? "还原" : "最大化"}
+                  onClick={() => void handleToggleMaximize()}
                 >
-                  {dark ? <Sun size={16} /> : <Moon size={16} />}
-                </ActionButton>
-                <ActionButton
-                  size="sm"
-                  disabled={
-                    busy ||
-                    !snapshot ||
-                    (!snapshot.status.running &&
-                      snapshot.logStorage?.ready === false)
-                  }
-                  variant={snapshot?.status.running ? "outline" : "default"}
-                  onClick={onGateway}
-                >
-                  {snapshot?.status.running ? (
-                    <Square size={12} />
+                  {maximized ? (
+                    <Minimize2 size={7} strokeWidth={2.4} aria-hidden />
                   ) : (
-                    <Play size={12} />
+                    <Maximize2 size={7} strokeWidth={2.4} aria-hidden />
                   )}
-                  {snapshot?.status.running ? "停止网关" : "启动网关"}
-                </ActionButton>
+                </button>
               </div>
-            </header>
-            <main
-              className={`mg-main ${tab === "models" && snapshot ? "mg-main--catalog" : ""}`}
-              id="manual-content"
-              tabIndex={0}
+            )}
+
+            <button
+              className="mg-brand"
+              type="button"
+              aria-label="LumaGate 首页"
+              title={`LumaGate v${appVersion}`}
+              onClick={() => onTab("overview")}
             >
-              {children}
-            </main>
-          </section>
-        </div>
+              <span className="mg-brand-mark">
+                <img src={brandMark} alt="" aria-hidden />
+              </span>
+              <strong>LumaGate</strong>
+            </button>
+          </div>
+
+          <nav className="mg-topnav" aria-label="主导航">
+            {primaryNav.map((entry) => {
+              const badge =
+                entry.id === "sources" && activeProviders > 0
+                  ? activeProviders
+                  : entry.id === "agents" && connectedAgents > 0
+                    ? connectedAgents
+                    : null;
+              return (
+                <button
+                  key={entry.id}
+                  type="button"
+                  className="mg-topnav-item"
+                  aria-label={entry.label}
+                  aria-current={tab === entry.id ? "page" : undefined}
+                  onClick={() => onTab(entry.id)}
+                >
+                  <entry.icon size={14} strokeWidth={1.9} aria-hidden />
+                  <span>{entry.name}</span>
+                  {badge !== null && (
+                    <em className="mg-topnav-count">{badge}</em>
+                  )}
+                </button>
+              );
+            })}
+          </nav>
+
+          <div className="mg-titlebar-right" data-tauri-drag-region>
+            <div className="mg-gateway-pill">
+              <button
+                type="button"
+                className={`mg-gateway-toggle ${running ? "is-running" : ""}`}
+                disabled={
+                  busy ||
+                  !snapshot ||
+                  (!running && snapshot.logStorage?.ready === false)
+                }
+                aria-label={running ? "停止" : "启动网关"}
+                title={running ? "点击停止网关" : "点击启动本地网关"}
+                onClick={onGateway}
+              >
+                <i aria-hidden />
+                <span>{!snapshot ? "连接中" : running ? "运行中" : "启动网关"}</span>
+                {running ? <Square size={9} aria-hidden /> : <Play size={9} aria-hidden />}
+              </button>
+              <button
+                type="button"
+                className="mg-endpoint-copy"
+                disabled={!snapshot}
+                onClick={copyAddr}
+                title={`复制模型目录地址 (${endpointLabel})`}
+                aria-label="复制目录地址"
+              >
+                <code>{endpointLabel}</code>
+                {copiedAddr ? <Check size={11} /> : <Copy size={11} />}
+              </button>
+            </div>
+
+            <div className="mg-titlebar-utils" aria-label="辅助导航">
+              {utilityNav.map((entry) => (
+                <Tooltip key={entry.id}>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      className={`mg-util-btn ${tab === entry.id ? "is-active" : ""}`}
+                      aria-label={entry.label}
+                      aria-current={tab === entry.id ? "page" : undefined}
+                      onClick={() => onTab(entry.id)}
+                    >
+                      <entry.icon size={15} strokeWidth={1.85} aria-hidden />
+                      {entry.id === "settings" && hasUpdate && (
+                        <i className="mg-nav-badge" aria-label="有可用更新" />
+                      )}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">{entry.name}</TooltipContent>
+                </Tooltip>
+              ))}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    className="mg-util-btn"
+                    aria-label="切换外观"
+                    onClick={() => setDark((v) => !v)}
+                  >
+                    {dark ? <Sun size={15} /> : <Moon size={15} />}
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">
+                  {dark ? "浅色外观" : "深色外观"}
+                </TooltipContent>
+              </Tooltip>
+            </div>
+
+            {isWindows && (
+              <div className="mg-win-caption-controls" aria-label="窗口控制">
+                <button
+                  type="button"
+                  className="mg-win-caption-btn"
+                  aria-label="最小化窗口"
+                  title="最小化"
+                  onClick={handleMinimize}
+                >
+                  <Minus size={13} strokeWidth={1.8} aria-hidden />
+                </button>
+                <button
+                  type="button"
+                  className="mg-win-caption-btn"
+                  aria-label={maximized ? "还原窗口" : "最大化窗口"}
+                  title={maximized ? "还原" : "最大化"}
+                  onClick={() => void handleToggleMaximize()}
+                >
+                  {maximized ? (
+                    <Minimize2 size={12} strokeWidth={1.8} aria-hidden />
+                  ) : (
+                    <Maximize2 size={12} strokeWidth={1.8} aria-hidden />
+                  )}
+                </button>
+                <button
+                  type="button"
+                  className="mg-win-caption-btn is-close"
+                  aria-label="关闭窗口"
+                  title="关闭"
+                  onClick={handleClose}
+                >
+                  <X size={14} strokeWidth={1.8} aria-hidden />
+                </button>
+              </div>
+            )}
+          </div>
+        </header>
+
+        <main
+          className="mg-content mg-stage-content"
+          id="manual-content"
+          tabIndex={-1}
+          data-page={allNav.find((n) => n.id === tab)?.id ?? tab}
+        >
+          {children}
+        </main>
       </div>
     </TooltipProvider>
   );

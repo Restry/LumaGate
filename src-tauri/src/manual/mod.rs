@@ -1,5 +1,6 @@
 mod aggregation;
 pub mod catalog;
+pub mod codex_sub;
 pub mod completion;
 mod controls;
 pub mod copilot;
@@ -53,6 +54,7 @@ pub const LOCAL_TOKEN: &str = "cc-switch-manual-local";
 pub struct ManualState {
     pub db: Arc<Database>,
     copilot: Arc<copilot::Manager>,
+    codex: Arc<codex_sub::Manager>,
     logs: std::sync::Mutex<Arc<logs::RequestLogs>>,
     drain: Arc<drain::Gate>,
     mutation: Mutex<()>,
@@ -80,6 +82,26 @@ struct RunningGateway {
 }
 
 impl ManualState {
+    pub(crate) fn maybe_auto_sync(&self) {
+        let auto_sync = sync::AutoSyncSettings::load(&self.db);
+        if !auto_sync.codex && !auto_sync.claude && !auto_sync.pi {
+            return;
+        }
+        let Ok(doc) = Document::load(&self.db) else {
+            return;
+        };
+        let Ok(settings) = network::Settings::load(&self.db) else {
+            return;
+        };
+        let Ok(home) = crate::config::get_home_dir().canonicalize() else {
+            return;
+        };
+        if let Err(err) = sync::sync_managed_catalogs(&home, &doc, &settings.base_url(), &auto_sync)
+        {
+            log::warn!("[AutoSync] 自动同步客户端模型目录失败: {err}");
+        }
+    }
+
     fn current_logs(&self) -> Arc<logs::RequestLogs> {
         self.logs.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
@@ -140,7 +162,8 @@ impl ManualState {
             .with_manual_logs(logs)
             .with_manual_drain(self.drain.clone())
             .with_manual_network(settings.clone())
-            .with_manual_copilot(self.copilot.clone());
+            .with_manual_copilot(self.copilot.clone())
+            .with_manual_codex(self.codex.clone());
         server.start().await.map_err(|e| e.to_string())?;
         Ok(RunningGateway { server, settings })
     }
@@ -165,7 +188,9 @@ impl ManualState {
             .ok_or("Provider 不存在")?;
         source.enabled = enabled;
         // A routing control does not delete catalogs, credentials, policies or test history.
-        doc.save(&self.db)
+        doc.save(&self.db)?;
+        self.maybe_auto_sync();
+        Ok(())
     }
 }
 
@@ -227,9 +252,19 @@ async fn manual_snapshot(state: State<'_, ManualState>) -> Result<Value, String>
         .copilot
         .status(doc.providers.iter().find_map(|p| p.copilot.as_ref()))
         .await;
+    let codex_status = state
+        .codex
+        .status(doc.providers.iter().find_map(|p| p.codex.as_ref()))
+        .await;
+    let base_url = active.unwrap_or(&settings).base_url();
+    let auto_sync = sync::AutoSyncSettings::load(&state.db);
+    let agents_status = crate::config::get_home_dir()
+        .canonicalize()
+        .ok()
+        .map(|home| sync::inspect_agents(&home, &base_url, &auto_sync));
     Ok(
-        json!({"document":doc,"groups":doc.groups(),"status":status,"copilotAuth":copilot_status,"logStorage":state.current_logs().storage_status(),
-        "baseUrl":active.unwrap_or(&settings).base_url(),"network":settings.snapshot(active, &network::access_keys::Registry::load(&state.db)?)}),
+        json!({"document":doc,"groups":doc.groups(),"status":status,"copilotAuth":copilot_status,"codexAuth":codex_status,"agents":agents_status,"logStorage":state.current_logs().storage_status(),
+        "baseUrl":base_url,"network":settings.snapshot(active, &network::access_keys::Registry::load(&state.db)?)}),
     )
 }
 
@@ -324,16 +359,17 @@ async fn manual_save(
     let _guard = state.mutation.lock().await;
     let current = Document::load(&state.db)?;
     copilot::validate_document_edit(&current, &document)?;
+    codex_sub::validate_document_edit(&current, &document)?;
     if key_update.as_ref().is_some_and(|u| match u {
         keys::KeyUpdate::Set { provider_id, .. } | keys::KeyUpdate::Clear { provider_id } => {
-            provider_id == copilot::PROVIDER_ID
+            provider_id == copilot::PROVIDER_ID || provider_id == codex_sub::PROVIDER_ID
         }
     }) {
-        return Err("Copilot 使用 GitHub 登录，不接受 API Key".into());
+        return Err("订阅账号来源使用 OAuth 登录，不接受 API Key".into());
     }
     let db = state.db.clone();
     // 文件写入和 SQLite 提交放到阻塞线程，避免拖住发现与转发请求。
-    tauri::async_runtime::spawn_blocking(move || {
+    let warnings = tauri::async_runtime::spawn_blocking(move || {
         keys::save_with_keys(
             &current,
             document,
@@ -346,7 +382,9 @@ async fn manual_save(
         )
     })
     .await
-    .map_err(|_| "密钥保存任务失败，请重试".to_string())?
+    .map_err(|_| "密钥保存任务失败，请重试".to_string())??;
+    state.maybe_auto_sync();
+    Ok(warnings)
 }
 
 #[tauri::command]
@@ -361,13 +399,15 @@ async fn manual_set_model_protocol(
     if revision != doc.revision {
         return Err("目录已变化，请刷新后重试".into());
     }
-    if catalog::resolve_group(&doc.groups(), &group_id)
-        .is_some_and(|g| g.model.id.starts_with("copilot/"))
-    {
-        return Err("Copilot Endpoint 由模型目录决定，请刷新模型，不手动覆盖".into());
+    if catalog::resolve_group(&doc.groups(), &group_id).is_some_and(|g| {
+        g.model.id.starts_with("copilot/") || g.model.id.starts_with("codex/")
+    }) {
+        return Err("订阅来源的 Endpoint 由模型目录决定，请刷新模型，不手动覆盖".into());
     }
     endpoints::set_override(&mut doc, &group_id, protocol)?;
-    doc.save(&state.db)
+    doc.save(&state.db)?;
+    state.maybe_auto_sync();
+    Ok(())
 }
 
 fn client() -> Result<reqwest::Client, String> {
@@ -639,6 +679,8 @@ async fn discover_catalog(state: &ManualState, provider_id: &str) -> Result<usiz
     let models = tokio::time::timeout(Duration::from_secs(300), async {
         if source.copilot.is_some() {
             state.copilot.discover(source).await
+        } else if source.codex.is_some() {
+            state.codex.discover(source).await
         } else {
             let catalog = discover_models(source).await?;
             // Azure Foundry 的 /models 是资源全量目录，不是已部署列表。
@@ -664,12 +706,13 @@ async fn discover_catalog(state: &ManualState, provider_id: &str) -> Result<usiz
         .models = models;
     // 保留仍存在的策略；引用消失的 fallback 不静默替换，交由验证报错。
     doc.validate()?;
-    if source.copilot.is_some() {
+    if source.copilot.is_some() || source.codex.is_some() {
         controls::clear_source_tests(&mut doc, provider_id);
     } else {
         doc.tests.clear();
     }
     doc.save(&state.db)?;
+    state.maybe_auto_sync();
     Ok(count)
 }
 
@@ -740,6 +783,18 @@ async fn manual_test(
             provider_name: Some(source.name.clone()),
             model_id: Some(model.id.clone()),
         }
+    } else if source.codex.is_some() {
+        let start = std::time::Instant::now();
+        let outcome = state.codex.test(source, model).await;
+        TestResult {
+            success: outcome.is_ok(),
+            latency_ms: start.elapsed().as_millis() as u64,
+            checked_at: chrono::Utc::now().to_rfc3339(),
+            detail: outcome.err().unwrap_or("测试通过".into()),
+            provider_id: Some(source.id.clone()),
+            provider_name: Some(source.name.clone()),
+            model_id: Some(model.id.clone()),
+        }
     } else {
         controls::test_deployment(&doc, &group_id, &provider_id).await?
     };
@@ -756,7 +811,7 @@ async fn manual_test(
 #[tauri::command]
 async fn manual_set_model_blocked(
     state: State<'_, ManualState>,
-    model_id: String,
+    model_ids: Vec<String>,
     blocked: bool,
     revision: u64,
 ) -> Result<(), String> {
@@ -765,8 +820,74 @@ async fn manual_set_model_blocked(
     if doc.revision != revision {
         return Err("目录已变化，请刷新后重试".into());
     }
-    controls::set_blocked(&mut doc, &model_id, blocked)?;
-    doc.save(&state.db)
+    // 一个展示组可能跨 copilot/ 命名空间，屏蔽要一次写完再保存，
+    // 否则第二次写会撞上 revision 变化。
+    for model_id in &model_ids {
+        controls::set_blocked(&mut doc, model_id, blocked)?;
+    }
+    doc.save(&state.db)?;
+    state.maybe_auto_sync();
+    Ok(())
+}
+
+#[tauri::command]
+async fn manual_set_model_enabled(
+    state: State<'_, ManualState>,
+    provider_id: String,
+    model_id: String,
+    enabled: bool,
+    revision: u64,
+) -> Result<(), String> {
+    let _guard = state.mutation.lock().await;
+    let mut doc = Document::load(&state.db)?;
+    if doc.revision != revision {
+        return Err("目录已变化，请刷新后重试".into());
+    }
+    controls::set_model_enabled(&mut doc, &provider_id, &model_id, enabled)?;
+    doc.save(&state.db)?;
+    state.maybe_auto_sync();
+    Ok(())
+}
+
+#[tauri::command]
+async fn manual_set_models_enabled_batch(
+    state: State<'_, ManualState>,
+    provider_id: String,
+    model_ids: Option<Vec<String>>,
+    enabled: bool,
+    revision: u64,
+) -> Result<usize, String> {
+    let _guard = state.mutation.lock().await;
+    let mut doc = Document::load(&state.db)?;
+    if doc.revision != revision {
+        return Err("目录已变化，请刷新后重试".into());
+    }
+    let changed = controls::set_models_enabled_batch(
+        &mut doc,
+        &provider_id,
+        model_ids.as_deref(),
+        enabled,
+    )?;
+    doc.save(&state.db)?;
+    state.maybe_auto_sync();
+    Ok(changed)
+}
+
+#[tauri::command]
+async fn manual_match_codex_models(
+    state: State<'_, ManualState>,
+    model_ids: Vec<String>,
+    revision: u64,
+) -> Result<usize, String> {
+    let _guard = state.mutation.lock().await;
+    let mut doc = Document::load(&state.db)?;
+    if doc.revision != revision {
+        return Err("目录已变化，请刷新后重试".into());
+    }
+    let matched = controls::match_enabled_models(&mut doc, &model_ids)?;
+    doc.save(&state.db)?;
+    state.maybe_auto_sync();
+    Ok(matched)
 }
 
 #[tauri::command]
@@ -890,7 +1011,93 @@ async fn manual_apply_sync(
         .await
         .remove(&plan_id)
         .ok_or("预览不存在或已使用，请重新预览")?;
-    plan.apply(&state.db)
+    let agent = plan.plan.agent;
+    let applied = plan.apply(&state.db)?;
+    // 用户显式接入客户端后，默认开启该客户端的可用模型自动同步。
+    let mut auto_sync = sync::AutoSyncSettings::load(&state.db);
+    auto_sync.set(agent, true);
+    let _ = auto_sync.save(&state.db);
+    Ok(applied)
+}
+
+#[tauri::command]
+async fn manual_agent_status(state: State<'_, ManualState>) -> Result<sync::AgentsStatus, String> {
+    let settings = network::Settings::load(&state.db)?;
+    let server = state.server.lock().await;
+    let base = server
+        .as_ref()
+        .map(|s| s.settings.base_url())
+        .unwrap_or_else(|| settings.base_url());
+    drop(server);
+    let auto_sync = sync::AutoSyncSettings::load(&state.db);
+    let home = crate::config::get_home_dir()
+        .canonicalize()
+        .map_err(|e| e.to_string())?;
+    Ok(sync::inspect_agents(&home, &base, &auto_sync))
+}
+
+#[tauri::command]
+async fn manual_set_auto_sync(
+    state: State<'_, ManualState>,
+    agent: sync::Agent,
+    enabled: bool,
+) -> Result<(), String> {
+    let _guard = state.mutation.lock().await;
+    let mut auto_sync = sync::AutoSyncSettings::load(&state.db);
+    auto_sync.set(agent, enabled);
+    auto_sync.save(&state.db)?;
+    if enabled {
+        state.maybe_auto_sync();
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn manual_sync_now(
+    state: State<'_, ManualState>,
+    agent: sync::Agent,
+) -> Result<Vec<sync::Agent>, String> {
+    let _guard = state.mutation.lock().await;
+    let doc = Document::load(&state.db)?;
+    let settings = network::Settings::load(&state.db)?;
+    let server = state.server.lock().await;
+    let base = settings.sync_base(server.as_ref().map(|active| &active.settings))?;
+    drop(server);
+    let home = crate::config::get_home_dir()
+        .canonicalize()
+        .map_err(|e| e.to_string())?;
+    let mut forced = sync::AutoSyncSettings::default();
+    forced.set(agent, true);
+    let updated = sync::sync_managed_catalogs(&home, &doc, &base, &forced)?;
+    if updated.is_empty() {
+        return Err("该客户端尚未接入 LumaGate，请先点击一键接入".into());
+    }
+    Ok(updated)
+}
+
+#[tauri::command]
+async fn manual_disconnect_codex(state: State<'_, ManualState>) -> Result<String, String> {
+    let _guard = state.mutation.lock().await;
+    let home = crate::config::get_home_dir()
+        .canonicalize()
+        .map_err(|e| e.to_string())?;
+    let msg = sync::disconnect_codex(&home)?;
+    let mut auto_sync = sync::AutoSyncSettings::load(&state.db);
+    auto_sync.codex = false;
+    let _ = auto_sync.save(&state.db);
+    Ok(msg)
+}
+
+#[tauri::command]
+async fn manual_set_codex_default_model(
+    state: State<'_, ManualState>,
+    model_id: String,
+) -> Result<(), String> {
+    let _guard = state.mutation.lock().await;
+    let home = crate::config::get_home_dir()
+        .canonicalize()
+        .map_err(|e| e.to_string())?;
+    sync::set_codex_default_model(&home, &model_id)
 }
 
 #[tauri::command]
@@ -926,7 +1133,8 @@ async fn manual_launch(agent: sync::Agent) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     let mut command = {
         let mut command = std::process::Command::new("wt");
-        command.args(["new-tab", &command_text]);
+        command.args(["new-tab", "cmd", "/k"]);
+        command.args(command_text.split_whitespace());
         command
     };
     #[cfg(target_os = "linux")]
@@ -961,6 +1169,17 @@ pub async fn models(HttpState(state): HttpState<ProxyState>) -> Response {
             StatusCode::INTERNAL_SERVER_ERROR,
             "catalog_unavailable",
             "本地模型目录暂时不可用，请在应用内检查配置",
+        ),
+    }
+}
+
+pub async fn codex_models(HttpState(state): HttpState<ProxyState>) -> Response {
+    match Document::load(&state.db).and_then(|doc| sync::build_codex_catalog_value(&doc)) {
+        Ok(catalog) => Json(catalog).into_response(),
+        Err(_) => http_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "catalog_unavailable",
+            "本地 Codex 模型目录暂时不可用，请在应用内检查配置",
         ),
     }
 }
@@ -1009,6 +1228,9 @@ pub fn run() {
                 copilot: Arc::new(copilot::Manager::new(
                     crate::config::get_app_config_dir().join("copilot"),
                 )),
+                codex: Arc::new(codex_sub::Manager::new(
+                    crate::config::get_app_config_dir().join("codex"),
+                )),
                 logs: std::sync::Mutex::new(logs),
                 drain: Arc::new(drain::Gate::default()),
                 mutation: Mutex::new(()),
@@ -1041,6 +1263,12 @@ pub fn run() {
             copilot::manual_copilot_cancel,
             copilot::manual_copilot_disconnect,
             copilot::manual_copilot_open_login,
+            codex_sub::manual_codex_start,
+            codex_sub::manual_codex_poll,
+            codex_sub::manual_codex_cancel,
+            codex_sub::manual_codex_import_local,
+            codex_sub::manual_codex_disconnect,
+            codex_sub::manual_codex_open_login,
             manual_request_logs,
             manual_query_logs,
             manual_refresh_default_prices,
@@ -1051,6 +1279,9 @@ pub fn run() {
             manual_set_provider_cost_estimation,
             manual_set_model_protocol,
             manual_set_model_blocked,
+            manual_set_model_enabled,
+            manual_set_models_enabled_batch,
+            manual_match_codex_models,
             manual_discover,
             manual_test,
             manual_gateway,
@@ -1060,6 +1291,11 @@ pub fn run() {
             manual_reveal_access_key,
             manual_preview_sync,
             manual_apply_sync,
+            manual_agent_status,
+            manual_set_auto_sync,
+            manual_sync_now,
+            manual_disconnect_codex,
+            manual_set_codex_default_model,
             manual_launch
         ])
         .build(context())

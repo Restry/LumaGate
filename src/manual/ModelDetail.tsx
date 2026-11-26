@@ -1,17 +1,12 @@
 import { useEffect, useRef } from "react";
-import {
-  ArrowLeft,
-  ArrowUpRight,
-  Copy,
-  EyeOff,
-  FileJson,
-  Settings2,
-} from "lucide-react";
+import { ArrowLeft, Copy, EyeOff, FileJson, Settings2 } from "lucide-react";
 import { ActionButton, Choice } from "./ui";
 import { DeploymentTests } from "./DeploymentTests";
-import { capabilitySummary } from "./catalog-view";
 import {
   declaredInput,
+  displayModel,
+  groupModelIds,
+  isCopilotGroup,
   modalityLabel,
   protocolLabels,
   protocolPaths,
@@ -30,9 +25,8 @@ export interface ModelActions {
   onMetadata: (group: Group) => void;
   onCopy: (group: Group) => void;
   onProtocol: (group: Group, protocol: Protocol | null) => void;
-  onBlock: (modelId: string, blocked: boolean) => void;
+  onBlock: (modelIds: string[], blocked: boolean) => void;
   onEditSource: (source: Source) => void;
-  onUse: () => void;
 }
 
 export function ModelDetail({
@@ -49,6 +43,11 @@ export function ModelDetail({
   useEffect(() => {
     heading.current?.focus({ preventScroll: true });
   }, [group.id]);
+  const title = displayModel(group);
+  const copilot = isCopilotGroup(group);
+  const lockedProtocol =
+    group.model.id.startsWith("copilot/") ||
+    group.model.id.startsWith("codex/");
   return (
     <section
       className="mg-model-detail"
@@ -73,26 +72,16 @@ export function ModelDetail({
       <div className="mg-detail-body">
         <header className="mg-detail-title">
           <h2 ref={heading} tabIndex={-1}>
-            {group.publicId ?? group.model.id}
+            {title}
           </h2>
-          {group.model.name &&
-            group.model.name !== (group.publicId ?? group.model.id) && (
-              <p>{group.model.name}</p>
-            )}
-          <p>{capabilitySummary(group.model)}</p>
-          <ActionButton onClick={actions.onUse} size="sm">
-            在 Agent 中使用
-            <ArrowUpRight size={14} aria-hidden />
-          </ActionButton>
+          <p>
+            {protocolLabels[group.protocol]} · {group.providerIds.length} 个来源
+          </p>
         </header>
         <section className="mg-detail-section">
           <div className="mg-detail-section-heading">
-            <h3>来源与测试</h3>
-            <span>{group.providerIds.length} 个来源</span>
+            <h3>来源</h3>
           </div>
-          <p className="mg-detail-hint">
-            按来源发送一次文本请求。结果仅代表上次测试。
-          </p>
           <DeploymentTests
             group={group}
             sources={snapshot.document.providers}
@@ -124,7 +113,7 @@ export function ModelDetail({
             <Choice
               id="model-endpoint"
               label={`Endpoint ${group.model.id}`}
-              disabled={actions.busy || group.model.id.startsWith("copilot/")}
+              disabled={actions.busy || lockedProtocol}
               value={
                 group.protocolMode === "mixed"
                   ? "mixed"
@@ -160,7 +149,7 @@ export function ModelDetail({
               ]}
             />
             <code>{protocolPaths[group.protocol as Protocol]}</code>
-            {group.model.id.startsWith("copilot/") && (
+            {copilot && (
               <p>
                 Endpoint 与限额来自 Copilot
                 目录；使用独立路由，不参与跨来源或跨模型回退。
@@ -186,7 +175,7 @@ export function ModelDetail({
               <ActionButton
                 variant="outline"
                 size="sm"
-                disabled={actions.busy || group.model.id.startsWith("copilot/")}
+                disabled={actions.busy || copilot}
                 onClick={() => actions.onRoute(group)}
                 aria-label={`路由策略 ${group.model.id}`}
               >
@@ -252,13 +241,12 @@ export function ModelDetail({
             variant="ghost"
             size="sm"
             disabled={actions.busy}
-            onClick={() => actions.onBlock(group.model.id, true)}
-            aria-label={`屏蔽 ${group.model.id}`}
+            onClick={() => actions.onBlock(groupModelIds(group), true)}
+            aria-label={`屏蔽 ${title}`}
           >
             <EyeOff size={14} aria-hidden />
             屏蔽模型
           </ActionButton>
-          <p>从路由、公开目录和同步列表移除，可在“已屏蔽”中恢复。</p>
         </div>
       </div>
     </section>

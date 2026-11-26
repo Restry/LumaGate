@@ -11,16 +11,17 @@
     "windows": [
       {
         "center": true,
+        "decorations": false,
         "fullscreen": false,
-        "height": 800,
+        "height": 760,
         "label": "main",
-        "minHeight": 600,
-        "minWidth": 900,
+        "minHeight": 580,
+        "minWidth": 880,
         "resizable": true,
+        "shadow": true,
         "title": "\u67a2\u5149 \u00b7 LumaGate",
-        "titleBarStyle": "Overlay",
         "visible": false,
-        "width": 1200
+        "width": 1140
       }
     ]
   },

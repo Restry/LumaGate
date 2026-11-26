@@ -148,7 +148,7 @@ export function Notifications() {
   return (
     <Toaster
       className="mg-toasts"
-      position="top-center"
+      position="bottom-right"
       theme="system"
       style={
         {
@@ -162,9 +162,9 @@ export function Notifications() {
       }
       richColors
       closeButton
-      duration={4000}
-      visibleToasts={3}
-      offset={56}
+      duration={3600}
+      visibleToasts={2}
+      offset={16}
       toastOptions={{ className: "mg-toast" }}
     />
   );

@@ -141,6 +141,12 @@ pub fn credential_version(source: &Source) -> String {
                 .to_string(),
         );
     }
+    if let Some(binding) = &source.codex {
+        return super::catalog::hash(
+            &serde_json::json!(["manual_codex", source.base_url, source.protocol, binding])
+                .to_string(),
+        );
+    }
     super::catalog::hash(
         &serde_json::json!([
             source.base_url,

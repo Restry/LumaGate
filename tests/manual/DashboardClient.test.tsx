@@ -117,6 +117,7 @@ describe("实际客户端 Dashboard 迁移", () => {
     await user.click(screen.getByRole("combobox", { name: "概览时间范围" }));
     await user.click(screen.getByRole("option", { name: "全部" }));
     await waitFor(() => expect(metrics).toHaveTextContent("240"));
+    await user.click(screen.getByRole("button", { name: /展开详细分析/ }));
     expect(screen.getByRole("button", { name: /older-model/ })).toBeVisible();
     await user.click(screen.getByRole("combobox", { name: "概览时间范围" }));
     await user.click(screen.getByRole("option", { name: "最近 7 天" }));
@@ -125,16 +126,13 @@ describe("实际客户端 Dashboard 迁移", () => {
       screen.queryByRole("button", { name: /older-model/ }),
     ).not.toBeInTheDocument();
   });
-  it("入口默认折叠，概览只读真实 IPC，并正确区分失败与未知用量", async () => {
+  it("入口默认展开，概览只读真实 IPC，并正确区分失败与未知用量", async () => {
     render(<ManualApp initialWorkspace="overview" />);
     const metrics = await screen.findByLabelText("概览核心指标");
     await waitFor(() => expect(metrics).toHaveTextContent("50.0%"));
-    expect(metrics).toHaveTextContent("1 次失败 · 1 次待确认");
+    expect(metrics).toHaveTextContent("1 失败 · 1 待确认");
     expect(metrics).toHaveTextContent("120");
-    expect(screen.getByRole("button", { name: "展开侧栏" })).toHaveAttribute(
-      "aria-expanded",
-      "false",
-    );
+    expect(screen.getByLabelText("窗口控制")).toBeVisible();
     expect(calls()).toEqual(["manual_snapshot", "manual_query_logs"]);
     expect(rpc.mock.calls[1][1]).toMatchObject({
       query: { page: 0, pageSize: 25, grouping: "model" },
@@ -143,7 +141,8 @@ describe("实际客户端 Dashboard 迁移", () => {
   it("从异常进入日志会带入时间和失败条件，而不触发任何写入", async () => {
     const user = userEvent.setup();
     render(<ManualApp initialWorkspace="overview" />);
-    await screen.findByText("1 次失败 · 1 次待确认");
+    await screen.findByText("1 失败 · 1 待确认");
+    await user.click(screen.getByRole("button", { name: /展开详细分析/ }));
     await user.click(screen.getByRole("button", { name: "查看日志" }));
     await screen.findByRole("table", { name: "网关调用日志" });
     await waitFor(() =>
@@ -174,25 +173,19 @@ describe("实际客户端 Dashboard 迁移", () => {
     expect(screen.queryByText(/PRIVATE_BACKEND_ERROR/)).not.toBeInTheDocument();
     fail = false;
     await user.click(screen.getByRole("button", { name: "刷新概览" }));
-    await screen.findByText("1 次失败 · 1 次待确认");
+    await screen.findByText("1 失败 · 1 待确认");
     expect(calls()).not.toContain("manual_gateway");
   });
-  it("侧栏切换可用键盘操作，页面切换保持展开但重挂载默认收起", async () => {
+  it("自定义顶部导航可键盘切换工作区且不触发写入", async () => {
     const user = userEvent.setup();
-    const view = render(<ManualApp />);
-    await screen.findByRole("heading", { name: "模型" });
-    screen.getByRole("button", { name: "展开侧栏" }).focus();
-    await user.keyboard("{Enter}");
-    expect(screen.getByRole("button", { name: "收起侧栏" })).toHaveFocus();
-    await user.click(screen.getByRole("button", { name: "客户端" }));
-    expect(screen.getByRole("button", { name: "收起侧栏" })).toHaveAttribute(
-      "aria-expanded",
-      "true",
-    );
-    view.unmount();
     render(<ManualApp />);
-    expect(screen.getByRole("button", { name: "展开侧栏" })).toBeVisible();
-    expect(calls()).toEqual(["manual_snapshot", "manual_snapshot"]);
+    await screen.findByRole("heading", { name: "Providers" });
+    const agentsNav = screen.getByRole("button", { name: "客户端" });
+    agentsNav.focus();
+    await user.keyboard("{Enter}");
+    expect(await screen.findByRole("heading", { name: "Agents" })).toBeVisible();
+    expect(agentsNav).toHaveAttribute("aria-current", "page");
+    expect(calls()).toEqual(["manual_snapshot"]);
   });
   it("隐藏日志保留筛选但停止只读轮询，返回时继续读取", async () => {
     const view = render(<RequestLogs />);

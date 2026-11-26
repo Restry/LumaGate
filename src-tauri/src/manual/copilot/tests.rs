@@ -15,6 +15,7 @@ fn source() -> Source {
             account_id: "123".into(),
             grant_id: uuid::Uuid::new_v4().to_string(),
         }),
+        codex: None,
         protocol: Protocol::OpenaiChat,
         enabled: true,
         cost_estimation_enabled: true,

@@ -1,5 +1,12 @@
 export type Protocol = "anthropic" | "openai_chat" | "openai_responses";
-export type Agent = "pi" | "claude" | "codex";
+export type Agent =
+  | "pi"
+  | "claude"
+  | "codex"
+  | "opencode"
+  | "openclaw"
+  | "hermes"
+  | "droid";
 export interface Model {
   id: string;
   protocolOverride?: Protocol | null;
@@ -31,10 +38,51 @@ export interface Source {
   /** Azure AD 应用注册客户端 ID */
   azureClientId?: string | null;
   copilot?: { accountId: string; grantId: string } | null;
+  codex?: { accountId: string; grantId: string } | null;
   protocol: Protocol;
   enabled: boolean;
   costEstimationEnabled?: boolean;
   models: Model[];
+}
+
+export interface CodexAuthStatus {
+  connected: boolean;
+  email: string | null;
+  accountId: string | null;
+  plan: string | null;
+  source: string | null;
+  localAvailable: boolean;
+  localEmail: string | null;
+  message: string | null;
+}
+
+export interface CodexClientStatus {
+  connected: boolean;
+  mode: "desktop" | "profile" | "other" | "official";
+  currentBaseUrl: string | null;
+  currentModel: string | null;
+  catalogPath: string | null;
+  catalogOwner: "lumagate" | "magpie" | "other" | null;
+  catalogModels: string[];
+  autoSync: boolean;
+  canRestore: boolean;
+}
+
+export interface SimpleClientStatus {
+  connected: boolean;
+  installed?: boolean;
+  currentBaseUrl: string | null;
+  autoSync: boolean;
+}
+
+export interface AgentsStatus {
+  codex: CodexClientStatus;
+  claude: SimpleClientStatus;
+  pi: SimpleClientStatus;
+  opencode?: SimpleClientStatus;
+  openclaw?: SimpleClientStatus;
+  hermes?: SimpleClientStatus;
+  droid?: SimpleClientStatus;
 }
 
 /** Azure AD Client Credentials 配置是否完整 */
@@ -88,6 +136,10 @@ export interface Group {
   id: string;
   /** Safe request name from the backend; id remains the stable internal route. */
   publicId?: string;
+  /** 展示名：干净的模型 ID，永不带稳定路由哈希。 */
+  displayName?: string;
+  /** 组内各来源的模型 ID。跨 copilot/ 或 codex/ 命名空间合并时会有多个。 */
+  modelIds?: string[];
   model: Model;
   protocol: Protocol;
   automaticProtocol?: Protocol;
@@ -98,6 +150,36 @@ export interface Group {
   providerIds: string[];
   providerNames: string[];
   policy: Policy;
+}
+
+export function stripNamespace(id: string): string {
+  if (id.startsWith("copilot/") && id.length > "copilot/".length) {
+    return id.slice("copilot/".length);
+  }
+  if (id.startsWith("codex/") && id.length > "codex/".length) {
+    return id.slice("codex/".length);
+  }
+  return id;
+}
+
+/** 界面标题用它，不用 publicId —— 后者在名称歧义时会退回稳定路由哈希。 */
+export function displayModel(group: Group): string {
+  if (group.displayName) return group.displayName;
+  return stripNamespace(group.model.id);
+}
+export function groupModelIds(group: Group): string[] {
+  return group.modelIds?.length ? group.modelIds : [group.model.id];
+}
+export function isCopilotGroup(group: Group): boolean {
+  return groupModelIds(group).some((id) => id.startsWith("copilot/"));
+}
+export function isCodexGroup(group: Group): boolean {
+  return groupModelIds(group).some((id) => id.startsWith("codex/"));
+}
+export function isSubscriptionLockedProtocol(group: Group): boolean {
+  return (
+    group.model.id.startsWith("copilot/") || group.model.id.startsWith("codex/")
+  );
 }
 export interface GatewayAccessKey {
   id: string;
@@ -145,6 +227,8 @@ export interface Snapshot {
     login: string | null;
     message: string | null;
   };
+  codexAuth?: CodexAuthStatus;
+  agents?: AgentsStatus | null;
   logStorage?: { ready: boolean; path: string; message: string };
   document: GatewayDocument;
   groups: Group[];
@@ -172,8 +256,16 @@ export const protocolLabels: Record<Protocol, string> = {
   openai_chat: "OpenAI Chat",
   openai_responses: "OpenAI Responses",
 };
+export const protocolShortLabels: Record<Protocol, string> = {
+  anthropic: "Messages",
+  openai_chat: "Chat",
+  openai_responses: "Responses",
+};
 export function isBlocked(group: Group, doc: GatewayDocument): boolean {
-  return !!group.blocked || !!doc.blockedModels?.includes(group.model.id);
+  return (
+    !!group.blocked ||
+    groupModelIds(group).every((id) => !!doc.blockedModels?.includes(id))
+  );
 }
 export function testKey(groupId: string, providerId: string): string {
   return JSON.stringify([groupId, providerId]);

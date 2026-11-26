@@ -15,6 +15,7 @@ fn source(id: &str, model: Model) -> Source {
         azure_tenant_id: None,
         azure_client_id: None,
         copilot: None,
+        codex: None,
         protocol: Protocol::OpenaiChat,
         enabled: true,
         cost_estimation_enabled: true,

@@ -67,7 +67,17 @@ const snapshot: Snapshot = {
 function calls() {
   return rpc.mock.calls.map(([command]) => command);
 }
+async function openAllModels(user: ReturnType<typeof userEvent.setup>) {
+  const trigger = await screen.findByRole("button", {
+    name: /查看全部可用模型/,
+  });
+  if (trigger.getAttribute("aria-expanded") !== "true") {
+    await user.click(trigger);
+  }
+}
+
 async function openModel(user: ReturnType<typeof userEvent.setup>) {
+  await openAllModels(user);
   await user.click(
     await screen.findByRole("button", { name: "查看模型 demo" }),
   );
@@ -124,6 +134,7 @@ describe("手动网关操作边界", () => {
     );
     const user = userEvent.setup();
     render(<ManualApp />);
+    await openAllModels(user);
     expect(
       await screen.findByRole("button", { name: "查看模型 demo" }),
     ).toBeVisible();
@@ -134,12 +145,12 @@ describe("手动网关操作边界", () => {
     expect(calls()).toEqual(["manual_snapshot", "manual_query_logs"]);
   });
   it("打开界面只读取快照，不自动发现、测试、启动或同步", async () => {
+    const user = userEvent.setup();
     render(<ManualApp />);
+    await openAllModels(user);
     expect(await screen.findByText("demo")).toBeInTheDocument();
     expect(
-      within(screen.getByRole("list", { name: "模型列表" })).getByText(
-        "1 未测试",
-      ),
+      within(screen.getByRole("list", { name: "模型列表" })).getByText("就绪"),
     ).toBeInTheDocument();
     expect(calls()).toEqual(["manual_snapshot"]);
   });
@@ -147,7 +158,7 @@ describe("手动网关操作边界", () => {
   it("日志导航只读取日志，不启动网关或写入配置", async () => {
     const user = userEvent.setup();
     render(<ManualApp />);
-    await screen.findByText("demo");
+    await screen.findByRole("button", { name: "筛选来源 Example" });
     await user.click(screen.getByRole("button", { name: "调用日志" }));
     expect(
       await screen.findByRole("heading", { name: "调用日志" }),
@@ -161,7 +172,6 @@ describe("手动网关操作边界", () => {
   it("模型行支持手动设置 Endpoint，且不触发测试或同步", async () => {
     const user = userEvent.setup();
     render(<ManualApp />);
-    await screen.findByText("demo");
     await openModel(user);
     await user.click(screen.getByText("调用与路由设置"));
     const trigger = screen.getByRole("combobox", { name: "Endpoint demo" });
@@ -183,7 +193,7 @@ describe("手动网关操作边界", () => {
   it("启动网关只调用服务启动入口", async () => {
     const user = userEvent.setup();
     render(<ManualApp />);
-    await screen.findByText("demo");
+    await screen.findByRole("button", { name: "筛选来源 Example" });
     await user.click(screen.getByRole("button", { name: "启动网关" }));
     await waitFor(() =>
       expect(rpc).toHaveBeenCalledWith("manual_gateway", { running: true }),
@@ -192,14 +202,16 @@ describe("手动网关操作边界", () => {
     expect(calls()).not.toContain("manual_test");
   });
 
-  it.each(["Pi", "Claude Code", "Codex"])(
+  it.each(["Pi Agent", "Claude Code", "Codex"])(
     "启动 %s 不同步或测试模型",
     async (name) => {
       const user = userEvent.setup();
       render(<ManualApp />);
-      await screen.findByText("demo");
+      await screen.findByRole("button", { name: "筛选来源 Example" });
       await user.click(screen.getByRole("button", { name: "客户端" }));
-      await user.click(screen.getByRole("tab", { name }));
+      await user.click(
+        await screen.findByRole("button", { name: `展开 ${name}` }),
+      );
       await user.click(screen.getByRole("button", { name: `启动 ${name}` }));
       await waitFor(() => expect(calls()).toContain("manual_launch"));
       expect(calls()).not.toContain("manual_preview_sync");
@@ -211,16 +223,16 @@ describe("手动网关操作边界", () => {
   it("预览和取消都不写配置，确认后只提交预览令牌", async () => {
     const user = userEvent.setup();
     render(<ManualApp />);
-    await screen.findByText("demo");
+    await screen.findByRole("button", { name: "筛选来源 Example" });
     await user.click(screen.getByRole("button", { name: "客户端" }));
-    await user.click(screen.getAllByRole("button", { name: "预览同步" })[0]);
+    await user.click(screen.getByRole("button", { name: "一键接入 Codex" }));
     const dialog = await screen.findByRole("dialog");
     expect(calls()).not.toContain("manual_apply_sync");
     await user.click(
       within(dialog).getByRole("button", { name: "取消，不写入" }),
     );
     expect(calls()).not.toContain("manual_apply_sync");
-    await user.click(screen.getAllByRole("button", { name: "预览同步" })[0]);
+    await user.click(screen.getByRole("button", { name: "一键接入 Codex" }));
     await user.click(
       within(await screen.findByRole("dialog")).getByRole("button", {
         name: "确认写入配置",
@@ -257,9 +269,11 @@ describe("手动网关操作边界", () => {
   it("添加 Provider 不触发自动发现或 live 配置同步", async () => {
     const user = userEvent.setup();
     render(<ManualApp />);
-    await screen.findByText("demo");
-    await user.click(screen.getByRole("button", { name: "Provider" }));
-    await user.click(screen.getByRole("button", { name: "添加 Provider" }));
+    await screen.findByRole("button", { name: "筛选来源 Example" });
+    await user.click(screen.getByRole("button", { name: "来源与模型" }));
+    await user.click(
+      screen.getAllByRole("button", { name: "添加 API 来源" })[0],
+    );
     fireEvent.change(screen.getByLabelText("名称"), {
       target: { value: "Second" },
     });
@@ -279,20 +293,20 @@ describe("简洁反馈与说明", () => {
   it("帮助不占据默认工作区，显式进入帮助页不触发后端操作", async () => {
     const user = userEvent.setup();
     render(<ManualApp />);
-    await screen.findByText("demo");
+    await screen.findByRole("button", { name: "筛选来源 Example" });
     expect(screen.queryByText(/GPT 5.5 及以上默认/)).not.toBeInTheDocument();
     expect(screen.queryByText("你决定每一次更改")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "帮助" }));
     expect(await screen.findByRole("heading", { name: "帮助" })).toBeVisible();
     expect(screen.getByText(/GPT 5.5 及以上默认/)).toBeVisible();
     expect(calls()).toEqual(["manual_snapshot"]);
-    await user.click(screen.getByRole("button", { name: "模型" }));
+    await user.click(screen.getByRole("button", { name: "来源与模型" }));
     expect(
       screen.queryByRole("heading", { name: "帮助" }),
     ).not.toBeInTheDocument();
   });
 
-  it("重复点击不会重复请求，失败使用顶部错误气泡", async () => {
+  it("重复点击不会重复请求，失败使用右下角错误气泡", async () => {
     let finish: (value: unknown) => void = () => {};
     const original = rpc.getMockImplementation()!;
     rpc.mockImplementation((command, args) =>
@@ -304,7 +318,6 @@ describe("简洁反馈与说明", () => {
     );
     const user = userEvent.setup();
     render(<ManualApp />);
-    await screen.findByText("demo");
     await openModel(user);
     const button = screen.getByRole("button", { name: "测试 demo · Example" });
     await user.dblClick(button);
@@ -322,15 +335,17 @@ describe("简洁反馈与说明", () => {
     );
     expect(document.querySelector("[data-sonner-toaster]")).toHaveAttribute(
       "data-y-position",
-      "top",
+      "bottom",
     );
     expect(button).not.toBeDisabled();
   });
 
   it("成功气泡自动消失", async () => {
     render(<ManualApp />);
-    await screen.findByText("demo");
-    fireEvent.click(screen.getByRole("button", { name: "查看模型 demo" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: /查看全部可用模型/ }),
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "查看模型 demo" }));
     vi.useFakeTimers();
     await act(async () => {
       fireEvent.click(
@@ -341,13 +356,13 @@ describe("简洁反馈与说明", () => {
       await vi.advanceTimersByTimeAsync(100);
     });
     expect(
-      screen.getByText("demo · Example：测试通过 · 12 ms"),
+      screen.getByText("demo · Example：通过（12 ms）"),
     ).toBeInTheDocument();
     await act(async () => {
       await vi.advanceTimersByTimeAsync(5000);
     });
     expect(
-      screen.queryByText("demo · Example：测试通过 · 12 ms"),
+      screen.queryByText("demo · Example：通过（12 ms）"),
     ).not.toBeInTheDocument();
   });
 });
@@ -390,11 +405,10 @@ describe("来源测试、模态与屏蔽", () => {
     });
     const user = userEvent.setup();
     render(<ManualApp />);
-    await screen.findByText("demo");
     await openModel(user);
-    expect(
-      screen.getByText("输入：文本、图片 · 输出：文本"),
-    ).toBeInTheDocument();
+    await user.click(screen.getByText("能力与原始信息"));
+    expect(screen.getByText("文本、图片")).toBeInTheDocument();
+    await user.click(screen.getByText("能力与原始信息"));
     const list = screen.getByRole("list", { name: "demo 的来源测试" });
     expect(within(list).getAllByText("尚未测试")).toHaveLength(2);
     await user.click(
@@ -435,7 +449,6 @@ describe("来源测试、模态与屏蔽", () => {
     });
     const user = userEvent.setup();
     render(<ManualApp />);
-    await screen.findByText("demo");
     await openModel(user);
     await user.click(screen.getByRole("button", { name: "屏蔽 demo" }));
     await waitFor(() =>
@@ -443,21 +456,21 @@ describe("来源测试、模态与屏蔽", () => {
         screen.queryByRole("button", { name: "测试 demo · Example" }),
       ).not.toBeInTheDocument(),
     );
-    const blockedTab = screen.getByRole("tab", { name: /已屏蔽/ });
+    const blockedTab = screen.getByRole("tab", { name: /已停用/ });
     expect(blockedTab).toHaveAttribute("aria-selected", "false");
     expect(rpc).toHaveBeenCalledWith("manual_set_model_blocked", {
-      modelId: "demo",
+      modelIds: ["demo"],
       blocked: true,
       revision: 1,
     });
     await user.click(blockedTab);
-    await user.click(screen.getByRole("button", { name: "恢复 demo" }));
+    await user.click(screen.getByRole("switch", { name: "恢复模型 demo" }));
     await waitFor(() =>
       expect(
-        screen.queryByRole("button", { name: "恢复 demo" }),
+        screen.queryByRole("switch", { name: "恢复模型 demo" }),
       ).not.toBeInTheDocument(),
     );
-    await user.click(screen.getByRole("tab", { name: /全部模型/ }));
+    await user.click(screen.getByRole("tab", { name: /可用模型/ }));
     await openModel(user);
     expect(
       screen.getByRole("button", { name: "测试 demo · Example" }),
@@ -484,111 +497,83 @@ describe("Provider 模型选择", () => {
       model,
     }));
     rpc.mockResolvedValueOnce(data);
+    return data;
   }
-  async function openEditor() {
+  it("来源页单行开关可直接启停模型，且不触发自动发现或测试", async () => {
+    withModels();
     const user = userEvent.setup();
     render(<ManualApp />);
-    await screen.findByText("demo");
-    await user.click(screen.getByRole("button", { name: "Provider" }));
     await user.click(
-      screen.getByRole("button", { name: "选择 Example 的模型" }),
+      await screen.findByRole("button", { name: "筛选来源 Example" }),
     );
-    return { user, dialog: await screen.findByRole("dialog") };
-  }
-  it("整行、开关和空格都可切换，保存前不写入", async () => {
-    withModels();
-    const { user, dialog } = await openEditor();
-    const control = within(dialog).getByRole("switch", {
-      name: "启用模型 demo",
+    const control = screen.getByRole("switch", {
+      name: "启用模型 demo (Example)",
     });
     expect(control).toBeChecked();
-    await user.click(control.closest("label")!);
-    expect(control).not.toBeChecked();
     await user.click(control);
-    expect(control).toBeChecked();
-    control.focus();
-    await user.keyboard(" ");
-    expect(control).not.toBeChecked();
-    expect(calls()).toEqual(["manual_snapshot"]);
-    await user.click(
-      within(dialog).getByRole("button", { name: "保存模型选择" }),
+    await waitFor(() =>
+      expect(rpc).toHaveBeenCalledWith("manual_set_model_enabled", {
+        providerId: "a",
+        modelId: "demo",
+        enabled: false,
+        revision: 1,
+      }),
     );
-    await waitFor(() => expect(calls()).toContain("manual_save"));
-    const args = rpc.mock.calls.find(([name]) => name === "manual_save")?.[1];
-    expect(args).toMatchObject({
-      document: {
-        providers: [
-          {
-            models: [
-              expect.objectContaining({ id: "demo", enabled: false }),
-              expect.objectContaining({ id: "demo-mini", enabled: true }),
-              expect.objectContaining({ id: "kimi-k3", enabled: true }),
-            ],
-          },
-        ],
-      },
-    });
     expect(calls()).not.toContain("manual_discover");
     expect(calls()).not.toContain("manual_test");
     expect(calls()).not.toContain("manual_apply_sync");
   });
-  it("搜索与批量开关只影响筛选结果，Enter 不提交", async () => {
+  it("搜索与批量开关只影响筛选结果，且批量操作走显式指令", async () => {
     withModels();
-    const { user, dialog } = await openEditor();
-    const search = within(dialog).getByRole("searchbox", {
-      name: "搜索 Provider 模型",
-    });
+    const user = userEvent.setup();
+    render(<ManualApp />);
+    await user.click(
+      await screen.findByRole("button", { name: "筛选来源 Example" }),
+    );
+    const search = screen.getByRole("searchbox", { name: "搜索模型" });
     await user.type(search, "DEMO{Enter}");
     expect(
-      within(dialog).queryByRole("switch", { name: "启用模型 kimi-k3" }),
+      screen.queryByRole("switch", { name: "启用模型 kimi-k3 (Example)" }),
     ).not.toBeInTheDocument();
-    await user.click(
-      within(dialog).getByRole("button", { name: "停用筛选结果" }),
+    await user.click(screen.getByRole("button", { name: "全不选" }));
+    await waitFor(() =>
+      expect(rpc).toHaveBeenCalledWith("manual_set_models_enabled_batch", {
+        providerId: "a",
+        modelIds: ["demo", "demo-mini"],
+        enabled: false,
+        revision: 1,
+      }),
     );
-    expect(
-      within(dialog).getByRole("switch", { name: "启用模型 demo" }),
-    ).not.toBeChecked();
-    await user.clear(search);
-    await user.type(search, "mini");
-    await user.click(
-      within(dialog).getByRole("button", { name: "启用筛选结果" }),
-    );
-    await user.clear(search);
-    await user.type(search, "missing");
-    expect(
-      within(dialog).getByRole("button", { name: "启用筛选结果" }),
-    ).toBeDisabled();
-    expect(
-      within(dialog).getByRole("button", { name: "停用筛选结果" }),
-    ).toBeDisabled();
-    await user.clear(search);
-    expect(
-      within(dialog).getByRole("switch", { name: "启用模型 kimi-k3" }),
-    ).toBeChecked();
-    expect(
-      within(dialog).getByRole("switch", { name: "启用模型 demo-mini" }),
-    ).toBeChecked();
-    expect(
-      within(dialog).getByRole("switch", { name: "启用模型 demo" }),
-    ).not.toBeChecked();
-    expect(calls()).toEqual(["manual_snapshot"]);
+    expect(calls()).not.toContain("manual_discover");
+    expect(calls()).not.toContain("manual_test");
   });
-  it("取消不保存选择，再次打开恢复原状态", async () => {
-    withModels();
-    const { user, dialog } = await openEditor();
-    await user.click(
-      within(dialog).getByRole("button", { name: "停用筛选结果" }),
+  it("弹窗批量选择器支持行点击、空格切换与取消丢弃", async () => {
+    const { ProviderModelsEditor } = await import("@/manual/dialogs");
+    const data = withModels();
+    const onSave = vi.fn();
+    const onClose = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <ProviderModelsEditor
+        source={data.document.providers[0]}
+        busy={false}
+        onClose={onClose}
+        onSave={onSave}
+      />,
     );
+    const dialog = await screen.findByRole("dialog");
+    const control = within(dialog).getByRole("switch", {
+      name: "模型 demo 纳入候选",
+    });
+    expect(control).toBeChecked();
+    await user.click(control.closest("label")!);
+    expect(control).not.toBeChecked();
+    control.focus();
+    await user.keyboard(" ");
+    expect(control).toBeChecked();
     await user.click(within(dialog).getByRole("button", { name: "取消" }));
-    await user.click(
-      screen.getByRole("button", { name: "选择 Example 的模型" }),
-    );
-    const controls = within(await screen.findByRole("dialog")).getAllByRole(
-      "switch",
-    );
-    expect(controls).toHaveLength(3);
-    controls.forEach((control) => expect(control).toBeChecked());
-    expect(calls()).toEqual(["manual_snapshot"]);
+    expect(onSave).not.toHaveBeenCalled();
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
   it("没有目录时提示先拉取，不自动请求模型", async () => {
     const data = structuredClone(snapshot);
@@ -597,16 +582,10 @@ describe("Provider 模型选择", () => {
     rpc.mockResolvedValueOnce(data);
     const user = userEvent.setup();
     render(<ManualApp />);
-    expect(
-      await screen.findByText("来源已保存，下一步获取模型"),
-    ).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Provider" }));
-    expect(
-      screen.getByText("下一步：拉取模型目录，再选择启用范围。"),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "选择 Example 的模型" }),
-    ).toBeDisabled();
+    await user.click(
+      await screen.findByRole("button", { name: "筛选来源 Example" }),
+    );
+    expect(screen.getByText("还没有拉取模型")).toBeInTheDocument();
     expect(calls()).toEqual(["manual_snapshot"]);
   });
 });
@@ -615,9 +594,11 @@ describe("直接填写密钥", () => {
   it("新增默认使用密码框，密钥不混入 Provider 文档", async () => {
     const user = userEvent.setup();
     render(<ManualApp />);
-    await screen.findByText("demo");
-    await user.click(screen.getByRole("button", { name: "Provider" }));
-    await user.click(screen.getByRole("button", { name: "添加 Provider" }));
+    await screen.findByRole("button", { name: "筛选来源 Example" });
+    await user.click(screen.getByRole("button", { name: "来源与模型" }));
+    await user.click(
+      screen.getAllByRole("button", { name: "添加 API 来源" })[0],
+    );
     const input = screen.getByLabelText("API Key");
     expect(input).toHaveAttribute("type", "password");
     expect(screen.queryByLabelText("环境变量名称")).not.toBeInTheDocument();
@@ -648,10 +629,11 @@ describe("直接填写密钥", () => {
     rpc.mockResolvedValueOnce(data);
     const user = userEvent.setup();
     render(<ManualApp />);
-    await screen.findByText("demo");
-    await user.click(screen.getByRole("button", { name: "Provider" }));
-    expect(screen.getByText(/API Key 已保存/)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "编辑来源 Example" }));
+    await user.click(
+      await screen.findByRole("button", { name: "筛选来源 Example" }),
+    );
+    const banner = screen.getByRole("region", { name: "来源 Example" });
+    await user.click(within(banner).getByRole("button", { name: "编辑" }));
     expect(screen.getByLabelText("API Key")).toHaveValue("");
     expect(screen.getByLabelText("API Key")).toHaveAttribute(
       "placeholder",
@@ -669,14 +651,18 @@ describe("直接填写密钥", () => {
   it("取消会清空尚未保存的密钥输入", async () => {
     const user = userEvent.setup();
     render(<ManualApp />);
-    await screen.findByText("demo");
-    await user.click(screen.getByRole("button", { name: "Provider" }));
-    await user.click(screen.getByRole("button", { name: "添加 Provider" }));
+    await screen.findByRole("button", { name: "筛选来源 Example" });
+    await user.click(screen.getByRole("button", { name: "来源与模型" }));
+    await user.click(
+      screen.getAllByRole("button", { name: "添加 API 来源" })[0],
+    );
     fireEvent.change(screen.getByLabelText("API Key"), {
       target: { value: "fixture-discard" },
     });
     await user.click(screen.getByRole("button", { name: "取消" }));
-    await user.click(screen.getByRole("button", { name: "添加 Provider" }));
+    await user.click(
+      screen.getAllByRole("button", { name: "添加 API 来源" })[0],
+    );
     expect(screen.getByLabelText("API Key")).toHaveValue("");
     expect(calls()).not.toContain("manual_save");
   });
@@ -684,9 +670,10 @@ describe("直接填写密钥", () => {
   it("旧环境变量方式可以手动切换到直接输入", async () => {
     const user = userEvent.setup();
     render(<ManualApp />);
-    await screen.findByText("demo");
-    await user.click(screen.getByRole("button", { name: "Provider" }));
-    await user.click(screen.getByRole("button", { name: "编辑来源 Example" }));
+    await user.click(
+      await screen.findByRole("button", { name: "筛选来源 Example" }),
+    );
+    await user.click(screen.getByRole("button", { name: "编辑" }));
     expect(screen.getByLabelText("环境变量名称")).toHaveValue("EXAMPLE_KEY");
     await user.click(
       screen.getByRole("checkbox", { name: "使用环境变量，替代直接填写密钥" }),

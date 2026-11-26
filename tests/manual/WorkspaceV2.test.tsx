@@ -80,10 +80,20 @@ function fixture(): Snapshot {
   };
 }
 const commands = () => rpc.mock.calls.map(([command]) => command);
+async function openAllModels(user: ReturnType<typeof userEvent.setup>) {
+  const trigger = await screen.findByRole("button", {
+    name: /查看全部可用模型/,
+  });
+  if (trigger.getAttribute("aria-expanded") !== "true") {
+    await user.click(trigger);
+  }
+}
+
 async function openModel(
   user: ReturnType<typeof userEvent.setup>,
   name = "demo",
 ) {
+  await openAllModels(user);
   await user.click(
     await screen.findByRole("button", { name: `查看模型 ${name}` }),
   );
@@ -135,9 +145,6 @@ describe("模型工作台 V2", () => {
     expect(screen.getByRole("region", { name: "模型详情" })).toHaveTextContent(
       "兼容路由 ID",
     );
-    await user.click(screen.getByRole("button", { name: "在 Agent 中使用" }));
-    await user.click(screen.getByRole("button", { name: "复制模型 ID" }));
-    expect(copy).toHaveBeenLastCalledWith("demo");
     expect(commands()).toEqual(["manual_snapshot"]);
   });
 
@@ -193,7 +200,8 @@ describe("模型工作台 V2", () => {
   it("列表只展示摘要，打开详情才显示独立测试且不发请求", async () => {
     const user = userEvent.setup();
     render(<ManualApp />);
-    expect(await screen.findByText("1 通过 · 1 失败")).toBeInTheDocument();
+    await openAllModels(user);
+    expect(await screen.findByText("1 失败")).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "测试 demo · Backup" }),
     ).not.toBeInTheDocument();
@@ -211,6 +219,7 @@ describe("模型工作台 V2", () => {
   it("搜索、详情和模型上下文在来源维护往返后保留", async () => {
     const user = userEvent.setup();
     render(<ManualApp />);
+    await openAllModels(user);
     await screen.findByRole("button", { name: "查看模型 demo" });
     await user.type(
       screen.getByRole("searchbox", { name: "搜索模型" }),
@@ -220,7 +229,6 @@ describe("模型工作台 V2", () => {
     await user.click(screen.getByRole("button", { name: "编辑来源 Backup" }));
     const dialog = await screen.findByRole("dialog");
     await user.click(within(dialog).getByRole("button", { name: "取消" }));
-    await user.click(screen.getByRole("button", { name: "返回刚才的模型" }));
     expect(screen.getByRole("searchbox", { name: "搜索模型" })).toHaveValue(
       "demo",
     );
@@ -233,24 +241,22 @@ describe("模型工作台 V2", () => {
     expect(commands()).toEqual(["manual_snapshot"]);
   });
 
-  it("待检查和未测试按来源记录筛选，不把混合结果标为整体不可用", async () => {
+  it("异常筛选按来源记录过滤，不把正常模型混入异常列表", async () => {
     const user = userEvent.setup();
     render(<ManualApp />);
+    await openAllModels(user);
     await screen.findByRole("button", { name: "查看模型 demo" });
-    await user.click(screen.getByRole("tab", { name: /待检查/ }));
+    await user.click(screen.getByRole("tab", { name: /异常/ }));
     expect(
       screen.getByRole("button", { name: "查看模型 demo" }),
     ).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "查看模型 other" }),
     ).not.toBeInTheDocument();
-    await user.click(screen.getByRole("tab", { name: /含未测试/ }));
+    await user.click(screen.getByRole("tab", { name: /可用模型/ }));
     expect(
       screen.getByRole("button", { name: "查看模型 other" }),
     ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "查看模型 demo" }),
-    ).not.toBeInTheDocument();
     expect(commands()).toEqual(["manual_snapshot"]);
   });
 
@@ -264,22 +270,23 @@ describe("模型工作台 V2", () => {
           checkedAt: "2026-01-02",
           detail: "fixture success",
         };
-        data.document.tests[testKey("other-route", "a")] = result;
+        data.document.tests[testKey("demo-route", "b")] = result;
         return result;
       }
     });
     const user = userEvent.setup();
     render(<ManualApp />);
+    await openAllModels(user);
     await screen.findByRole("button", { name: "查看模型 demo" });
-    await user.click(screen.getByRole("tab", { name: /含未测试/ }));
-    await openModel(user, "other");
+    await user.click(screen.getByRole("tab", { name: /异常/ }));
+    await openModel(user, "demo");
     await user.click(
-      screen.getByRole("button", { name: "测试 other · Example" }),
+      screen.getByRole("button", { name: "测试 demo · Backup" }),
     );
     expect(await screen.findByText("上次通过 · 42 ms")).toBeVisible();
     expect(screen.getByRole("region", { name: "模型详情" })).toBeVisible();
     expect(
-      screen.queryByRole("button", { name: "查看模型 other" }),
+      screen.queryByRole("button", { name: "查看模型 demo" }),
     ).not.toBeInTheDocument();
     expect(
       commands().filter((command) => command === "manual_test"),
@@ -375,7 +382,7 @@ describe("模型工作台 V2", () => {
     expect(screen.queryByText("网关已停止")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "重新连接" }));
     expect(
-      await screen.findByRole("button", { name: "查看模型 demo" }),
+      await screen.findByRole("button", { name: "筛选来源 Example" }),
     ).toBeVisible();
     expect(commands()).toEqual(["manual_snapshot", "manual_snapshot"]);
   });
@@ -397,9 +404,9 @@ describe("模型工作台 V2", () => {
     const entries = catalogEntries(data, initialCatalogView);
     expect(entries.counts).toEqual({
       all: 1,
+      enabled: 1,
+      disabled: 1,
       failed: 0,
-      untested: 1,
-      blocked: 1,
     });
     expect(entries.matches.map((group) => group.id)).toEqual(["other-route"]);
   });
@@ -419,9 +426,11 @@ describe("接入与使用的下一步", () => {
     });
     const user = userEvent.setup();
     render(<ManualApp />);
-    await screen.findByRole("button", { name: "查看模型 demo" });
-    await user.click(screen.getByRole("button", { name: "Provider" }));
-    await user.click(screen.getByRole("button", { name: "添加 Provider" }));
+    await screen.findByRole("button", { name: "筛选来源 Example" });
+    await user.click(screen.getByRole("button", { name: "来源与模型" }));
+    await user.click(
+      screen.getAllByRole("button", { name: "添加 API 来源" })[0],
+    );
     await user.type(screen.getByLabelText("名称"), "New source");
     await user.type(
       screen.getByLabelText("API 地址"),
@@ -446,13 +455,12 @@ describe("接入与使用的下一步", () => {
   it("同步结果在切换工作区后保留，Codex 显示真实命令但不自动启动", async () => {
     const user = userEvent.setup();
     render(<ManualApp />);
-    await openModel(user);
-    await user.click(screen.getByRole("button", { name: "在 Agent 中使用" }));
-    await user.click(screen.getByRole("tab", { name: "Codex" }));
+    await user.click(screen.getByRole("button", { name: "客户端" }));
+    await user.click(await screen.findByRole("button", { name: "展开 Codex" }));
     const copy = vi.spyOn(navigator.clipboard, "writeText");
     await user.click(screen.getByRole("button", { name: "复制网关启动命令" }));
     expect(copy).toHaveBeenCalledWith("codex --profile cc_switch_manual");
-    await user.click(screen.getByRole("button", { name: "预览同步" }));
+    await user.click(screen.getByRole("button", { name: "一键接入 Codex" }));
     const dialog = await screen.findByRole("dialog");
     expect(
       within(dialog).getByText("受管字段的写入摘要（不是完整文件差异）"),
@@ -463,7 +471,7 @@ describe("接入与使用的下一步", () => {
     expect(
       await screen.findByRole("region", { name: "Codex 同步结果" }),
     ).toHaveTextContent("本次会话已同步");
-    await user.click(screen.getByRole("button", { name: "模型" }));
+    await user.click(screen.getByRole("button", { name: "来源与模型" }));
     await user.click(screen.getByRole("button", { name: "客户端" }));
     expect(
       screen.getByRole("region", { name: "Codex 同步结果" }),

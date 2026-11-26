@@ -199,6 +199,10 @@
   border: 1px solid var(--mg-line);
   border-radius: 12px;
   background: var(--mg-surface);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
 }
 .mg-dashboard-client .mg-header {
   height: 48px;
@@ -233,9 +237,13 @@
 .mg-dashboard-client .mg-main {
   padding: var(--mg-space-section) var(--mg-space-page);
   min-width: 0;
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
 }
 .mg-dashboard-client .mg-main--catalog {
-  overflow: auto;
+  overflow: hidden;
 }
 .mg-dashboard-client .mg-page-heading {
   align-items: center;
@@ -796,251 +804,248 @@
   color: var(--mg-muted);
   font-size: 10px;
 }
-/* Provider master/detail. Existing mutation dialogs and revision checks remain unchanged. */
-.mc-provider-layout {
-  display: grid;
-  grid-template-columns: 212px minmax(0, 1fr);
-  gap: var(--mg-space-section);
-  align-items: start;
-}
-.mc-provider-list,
-.mc-provider-panel {
+/* 来源与模型工作台：左轨是筛选器也是配置入口，右栏始终是模型清单。
+   整页不滚：页头、来源轨、筛选条固定，列表和详情各自滚动。 */
+.mg-workbench {
   min-width: 0;
-}
-.mc-provider-list-label {
+  min-height: 0;
+  flex: 1;
   display: flex;
-  justify-content: space-between;
-  padding: 20px 8px 12px;
-  font-size: 11px;
-  color: var(--mg-muted);
+  flex-direction: column;
+  overflow: hidden;
 }
-.mc-provider-choice {
+.mg-workbench > .mg-page-heading {
+  flex-shrink: 0;
+}
+.mg-workbench-body {
+  display: grid;
+  grid-template-columns: 228px minmax(0, 1fr);
+  gap: var(--mg-space-section);
+  align-items: stretch;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.mg-source-rail {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.mg-source-rail-heading {
   display: flex;
   align-items: center;
-  gap: 12px;
-  width: 100%;
+  justify-content: space-between;
+  padding: 4px 8px 0;
+}
+.mg-source-rail-heading h2 {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--mg-muted);
+}
+.mg-source-rail-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.mg-source-rail-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
   text-align: left;
-  padding: 12px;
+  padding: 9px 10px;
   border: 1px solid transparent;
   border-radius: 8px;
-  margin-bottom: 6px;
+  background: none;
+  cursor: pointer;
 }
-.mc-provider-choice[aria-pressed="true"] {
+.mg-source-rail-item:hover {
+  background: var(--mg-soft);
+}
+.mg-source-rail-item[aria-pressed="true"] {
   background: var(--mg-soft);
   border-color: var(--mg-line);
 }
-.mc-provider-choice > span:last-child {
+.mg-source-rail-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.mg-source-rail-name {
   min-width: 0;
 }
-.mc-provider-choice strong {
+.mg-source-rail-name strong {
   display: block;
   font-size: 13px;
   font-weight: 500;
   overflow-wrap: anywhere;
 }
-.mc-provider-choice small {
+.mg-source-rail-name small {
   display: block;
   font-size: 11px;
   color: var(--mg-muted);
-  margin-top: 4px;
+  margin-top: 2px;
 }
-.mc-provider-choice-wrap {
+.mg-source-rail-foot {
+  padding: 8px 10px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--mg-muted);
+}
+.mg-source-config {
+  border: 1px solid var(--mg-line);
+  border-radius: 8px;
+  padding: 12px;
   display: flex;
   flex-direction: column;
+  gap: 12px;
 }
-.mc-provider-status {
+.mg-source-config > header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 12px 8px 42px;
-  font-size: 12px;
-  color: var(--mc-warning);
-  line-height: 1.4;
-}
-.mc-provider-status span {
-  flex: 1;
-  min-width: 0;
-}
-.mc-provider-note {
-  display: flex;
-  align-items: start;
-  gap: 8px;
+  gap: 6px;
   color: var(--mg-muted);
-  font-size: 11px;
-  line-height: 1.8;
-  margin: 26px 8px 0;
-  padding-top: 18px;
-  border-top: 1px solid var(--mg-line);
 }
-.mc-provider-panel {
-  border: 1px solid var(--mg-line);
-  border-radius: 10px;
+.mg-source-config > header h3 {
+  font-size: 11px;
+  font-weight: 500;
+}
+.mg-source-config dl {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.mg-source-config dl > div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.mg-source-config dt {
+  font-size: 11px;
+  color: var(--mg-muted);
+}
+.mg-source-config dd {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.mg-source-config dd code {
+  font-size: 11px;
+}
+.mg-source-config-toggle {
+  flex-direction: row !important;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.mg-source-config-toggle dd {
+  margin: 0;
+}
+.mg-source-config-note {
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--mg-muted);
+}
+.mg-source-config-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.mg-source-config-status {
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--mg-muted);
+}
+.mg-source-delete:hover {
+  color: var(--mc-danger, #b42318);
+}
+.mg-source-feedback {
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--mg-muted);
+}
+.mg-source-feedback.is-failed {
+  color: var(--mc-danger, #b42318);
+}
+/* 未纳入候选：选中来源时列出该来源的非候选模型，避免行内开关变成死路。
+   自己滚，不许把主列表挤出画面。 */
+.mg-pending-candidates {
+  margin-top: 16px;
+  border-top: 1px solid var(--mg-line);
+  padding-top: 4px;
+  flex: 0 0 auto;
+  max-height: 34%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
 }
-.mc-provider-heading {
+.mg-pending-candidates > .mg-list-heading {
+  flex-shrink: 0;
+}
+.mg-pending-list {
   display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 16px 20px 12px;
-}
-.mc-provider-heading .mc-avatar {
-  width: 44px;
-  height: 44px;
-  font-size: 18px;
-}
-.mc-provider-heading > div {
-  min-width: 0;
-}
-.mc-provider-heading h2 {
-  font-size: 19px;
-  font-weight: 600;
-  overflow-wrap: anywhere;
-}
-.mc-provider-heading p {
-  font-size: 12px;
-  color: var(--mg-muted);
-  margin-top: 5px;
-  overflow-wrap: anywhere;
-}
-.mc-source-status {
-  display: flex;
-  align-items: center;
-  gap: var(--mg-space-control);
-  margin-left: auto;
-  min-height: 36px;
-  color: var(--mg-ink);
-  font-size: 13px;
-  white-space: nowrap;
-}
-.mc-provider-toolbar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px 16px;
-  padding: 0 20px 12px;
-}
-.mc-provider-toolbar p {
-  font-size: 12px;
-  color: var(--mg-muted);
-}
-.mc-section-tabs {
-  display: flex;
-  gap: 26px;
-  border-bottom: 1px solid var(--mg-line);
-  padding: 0 24px;
-}
-.mc-section-tabs button {
-  padding: 12px 0;
-  border-bottom: 2px solid transparent;
-  font-size: 12px;
-  color: var(--mg-muted);
-}
-.mc-section-tabs button[aria-pressed="true"] {
-  border-bottom-color: var(--mg-ink);
-  color: var(--mg-ink);
-}
-.mc-section-tabs button span {
-  background: var(--mg-soft);
-  padding: 1px 5px;
-  border-radius: 3px;
-  font-size: 10px;
-  margin-left: 5px;
-}
-.mc-provider-body {
-  padding: 16px 20px;
-}
-.mc-connection-fields {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 16px;
-}
-.mc-connection-fields > div {
-  min-width: 0;
-}
-.mc-field-wide {
-  grid-column: 1/-1;
-}
-.mc-connection-fields dt {
-  font-size: 12px;
-  font-weight: 500;
-  margin-bottom: 8px;
-}
-.mc-connection-fields dd {
-  padding: 0;
-  min-height: 20px;
-  font-size: 13px;
-  overflow-wrap: anywhere;
-}
-.mc-connection-fields .mc-field-note {
-  border: 0;
-  padding: 0;
+  flex-direction: column;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   min-height: 0;
-  font-size: 12px;
-  color: var(--mg-muted);
-  margin-top: 9px;
 }
-.mc-provider-operation {
+.mg-pending-list li {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 14px;
-  border-top: 1px solid var(--mg-line);
-  padding-top: 16px;
-  margin-top: 16px;
-  font-size: 12px;
+  gap: 12px;
+  padding: 11px 8px;
+  border-bottom: 1px solid var(--mg-line);
 }
-.mc-provider-operation strong {
+.mg-pending-list li > span {
+  min-width: 0;
+}
+.mg-pending-list strong {
+  display: block;
+  font-size: 12px;
   font-weight: 500;
+  overflow-wrap: anywhere;
 }
-.mc-provider-operation p {
+.mg-pending-list small {
+  display: block;
   font-size: 11px;
   color: var(--mg-muted);
-  margin-top: 6px;
+  margin-top: 2px;
 }
-.mc-provider-body > .mc-provider-operation:first-child {
-  border: 0;
-  padding-top: 0;
-  margin-top: 0;
-  margin-bottom: 20px;
+@media (max-width: 1050px) {
+  .mg-workbench-body {
+    grid-template-columns: 196px minmax(0, 1fr);
+  }
 }
-.mc-provider-footer {
-  display: flex;
-  justify-content: flex-end;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding: 12px 20px;
-  border-top: 1px solid var(--mg-line);
-  background: var(--mg-bg);
-}
-.mc-provider-footer > .mg-button:first-child {
-  margin-left: 0;
-  margin-right: auto;
-}
-.mc-source-model-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 12px;
-}
-.mc-source-model-table th {
-  background: var(--mg-side);
-  color: var(--mg-muted);
-  font-size: 11px;
-  text-align: left;
-  padding: 10px;
-}
-.mc-source-model-table td {
-  padding: 13px 10px;
-  border-top: 1px solid var(--mg-line);
-  white-space: nowrap;
+@media (max-width: 760px) {
+  .mg-workbench-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .mg-source-rail-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 6px;
+  }
+  .mg-source-rail-row {
+    border: 1px solid var(--mg-line);
+    border-radius: 8px;
+    padding-right: 8px;
+  }
+  .mg-source-rail-row .mg-source-rail-item {
+    border: 0;
+  }
 }
 /* Model list retains its tested list semantics while adopting the approved table density. */
 .mg-dashboard-client .mg-catalog {
   container-type: normal;
 }
 .mg-dashboard-client .mg-model-browser {
-  overflow: auto;
+  overflow: hidden;
 }
 .mg-dashboard-client .mg-catalog-toolbar {
   flex-wrap: wrap;
@@ -1049,42 +1054,40 @@
   max-width: 100%;
 }
 .mg-dashboard-client .mg-model-records {
-  overflow: visible;
-  min-width: 930px;
+  overflow-y: auto;
   scrollbar-gutter: auto;
 }
-.mg-dashboard-client .mg-model-columns,
-.mg-dashboard-client .has-detail .mg-model-columns {
-  grid-template-columns:
-    minmax(190px, 1.8fr) minmax(100px, 1fr)
-    76px 76px 84px minmax(120px, 1fr) 16px;
-  gap: 12px;
-}
 .mg-dashboard-client .mg-list-heading.mg-model-columns {
-  min-width: 930px;
-  grid-template-columns:
-    minmax(190px, 1.8fr) minmax(100px, 1fr)
-    76px 76px 84px minmax(120px, 1fr) 64px;
   padding: 12px 16px;
 }
 .mc-model-list-row {
-  display: flex;
-  align-items: center;
+  padding: 0 16px;
   border-bottom: 1px solid var(--mg-line);
 }
 .mc-model-list-row:last-child {
   border-bottom: 0;
 }
+.mc-model-list-row:has(.mg-model-record[data-selected="true"]) {
+  background: var(--mg-selected);
+}
 .mg-dashboard-client .mg-model-record {
-  flex: 1;
-  min-width: 0;
   border: 0;
   min-height: 60px;
-  padding: 10px 16px;
+  padding: 10px 0;
+}
+.mg-dashboard-client .mg-model-record[data-selected="true"] {
+  background: transparent;
 }
 .mc-model-list-row > [role="switch"] {
-  flex-shrink: 0;
-  margin: 0 16px 0 0;
+  margin: 0;
+}
+/* 两种开关：全局屏蔽 vs 来源候选。同形不同色，
+   表头文字之外再多一层肉眼可辨的区别。 */
+.mc-model-list-row > [role="switch"][data-scope="candidate"][data-state="checked"] {
+  background: var(--mg-success);
+}
+.mc-model-list-row > [role="switch"][data-scope="block"][data-state="checked"] {
+  background: var(--mg-ink);
 }
 .mc-model-limit,
 .mc-model-route {
@@ -1448,10 +1451,6 @@
   .mc-secondary-grid {
     grid-template-columns: minmax(0, 1fr);
   }
-  .mc-provider-layout {
-    grid-template-columns: 180px minmax(0, 1fr);
-    gap: 18px;
-  }
   .mc-metrics article {
     padding: 16px;
   }
@@ -1466,26 +1465,6 @@
 @media (max-width: 760px) {
   .mc-metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-  .mc-provider-layout {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .mc-provider-list {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-  }
-  .mc-provider-list .mg-search {
-    flex-basis: 100%;
-    max-width: none;
-  }
-  .mc-provider-choice {
-    flex: 1 1 140px;
-    width: auto;
-  }
-  .mc-provider-list-label,
-  .mc-provider-note {
-    display: none;
   }
   .mg-dashboard-client .mg-agents-workspace > [data-orientation] {
     display: block;
@@ -1575,13 +1554,6 @@
   .mc-issue-code {
     display: none;
   }
-  .mc-provider-heading,
-  .mc-provider-body {
-    padding: 18px 14px;
-  }
-  .mc-provider-heading {
-    flex-wrap: wrap;
-  }
   .mc-connection-fields {
     grid-template-columns: 1fr;
     gap: 18px;
@@ -1589,9 +1561,6 @@
   .mc-section-tabs {
     padding: 0 14px;
     gap: 18px;
-  }
-  .mc-provider-footer {
-    padding: 14px;
   }
   .mg-dashboard-client .ls-overview {
     gap: 12px 18px;
@@ -1642,7 +1611,7 @@
 @media (forced-colors: active) {
   .mg-dashboard-client .mg-nav-item[aria-current="page"],
   .mc-segmented button[aria-pressed="true"],
-  .mc-provider-choice[aria-pressed="true"] {
+  .mg-source-rail-item[aria-pressed="true"] {
     outline: 1px solid Highlight;
   }
   .mc-observations i {

@@ -70,11 +70,13 @@ it("已连接来源在模型页可刷新，等待时防重入，失败保留目�
         reject = fail;
       });
   });
-  render(<ManualApp initialWorkspace="providers" />);
-  const region = await screen.findByRole("region", {
-    name: "来源 GitHub Copilot",
-  });
-  await user.click(within(region).getByRole("button", { name: /来源模型/ }));
+  render(<ManualApp initialWorkspace="sources" />);
+  await user.click(
+    await screen.findByRole("button", {
+      name: "筛选来源 GitHub Copilot",
+    }),
+  );
+  const region = screen.getByRole("region", { name: "来源 GitHub Copilot" });
   const refresh = within(region).getByRole("button", { name: "刷新模型" });
   await user.dblClick(refresh);
   expect(
@@ -89,7 +91,7 @@ it("已连接来源在模型页可刷新，等待时防重入，失败保留目�
   expect(within(region).getByRole("alert")).toHaveTextContent(
     "已有目录和启停选择保持不变",
   );
-  expect(within(region).getByText("copilot/example")).toBeVisible();
+  expect(screen.getByText("example")).toBeVisible();
   expect(
     within(region).getByRole("button", { name: "刷新模型" }),
   ).toBeEnabled();
@@ -115,9 +117,9 @@ it("已连接来源在模型页可刷新，等待时防重入，失败保留目�
 it("来源标题直接停用并恢复，保存模型和账号绑定，不打开编辑弹窗", async () => {
   const user = userEvent.setup();
   const original = structuredClone(data.document.providers[0]);
-  render(<ManualApp initialWorkspace="providers" />);
+  render(<ManualApp initialWorkspace="sources" />);
   const toggle = await screen.findByRole("switch", {
-    name: "启用来源 GitHub Copilot",
+    name: "GitHub Copilot 参与路由",
   });
   await user.click(toggle);
   await waitFor(() => expect(toggle).not.toBeChecked());
@@ -132,8 +134,15 @@ it("Copilot 的费用开关默认开启，停用路由后仍可独立保存且�
   const user = userEvent.setup();
   const original = structuredClone(data.document.providers[0]);
   data.document.providers[0].enabled = false;
-  const view = render(<ManualApp initialWorkspace="providers" />);
-  const toggle = await screen.findByRole("switch", { name: "参与费用估算" });
+  const view = render(<ManualApp initialWorkspace="sources" />);
+  await user.click(
+    await screen.findByRole("button", {
+      name: "筛选来源 GitHub Copilot",
+    }),
+  );
+  const toggle = screen.getByRole("switch", {
+    name: "GitHub Copilot 参与费用估算",
+  });
   expect(toggle).toBeChecked();
   await user.click(toggle);
   await waitFor(() => expect(toggle).not.toBeChecked());
@@ -143,13 +152,20 @@ it("Copilot 的费用开关默认开启，停用路由后仍可独立保存且�
     costEstimationEnabled: false,
   });
   view.unmount();
-  render(<ManualApp initialWorkspace="providers" />);
-  const restored = await screen.findByRole("switch", { name: "参与费用估算" });
+  render(<ManualApp initialWorkspace="sources" />);
+  await user.click(
+    await screen.findByRole("button", {
+      name: "筛选来源 GitHub Copilot",
+    }),
+  );
+  const restored = screen.getByRole("switch", {
+    name: "GitHub Copilot 参与费用估算",
+  });
   expect(restored).not.toBeChecked();
   await user.click(restored);
   await waitFor(() => expect(restored).toBeChecked());
   expect(
-    screen.getByRole("switch", { name: "启用来源 GitHub Copilot" }),
+    screen.getByRole("switch", { name: "GitHub Copilot 参与路由" }),
   ).not.toBeChecked();
 });
 

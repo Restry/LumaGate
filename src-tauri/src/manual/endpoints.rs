@@ -44,14 +44,26 @@ pub fn set_override(
     let mut candidate = doc.clone();
     for source in &mut candidate.providers {
         if group.provider_ids.contains(&source.id) {
-            if let Some(model) = source.models.iter_mut().find(|m| m.id == group.model.id) {
+            // 一组可能横跨 copilot/ 命名空间，组内每个来源自己的模型 ID 都要改。
+            for model in source
+                .models
+                .iter_mut()
+                .filter(|m| group.model_ids.contains(&m.id))
+            {
                 model.protocol_override = selected.clone();
             }
         }
     }
-    let mut model = group.model.clone();
-    model.protocol_override = selected;
-    let new_id = group_id(&protocol(&model), &model);
+    let new_id = candidate
+        .groups()
+        .into_iter()
+        .find(|g| g.provider_ids == group.provider_ids && g.model.id == group.model.id)
+        .map(|g| g.id)
+        .unwrap_or_else(|| {
+            let mut model = group.model.clone();
+            model.protocol_override = selected;
+            group_id(&protocol(&model), &model)
+        });
     if new_id != id {
         if candidate
             .policies

@@ -125,6 +125,11 @@ impl ProxyServer {
         self
     }
 
+    pub(crate) fn with_manual_codex(self, manager: Arc<crate::manual::codex_sub::Manager>) -> Self {
+        self.state.provider_router.manual.attach_codex(manager);
+        self
+    }
+
     pub async fn start(&self) -> Result<ProxyServerInfo, ProxyError> {
         // 检查是否已在运行
         if self.shutdown_tx.read().await.is_some() {
@@ -398,6 +403,7 @@ impl ProxyServer {
             // 手动版不挂载会读取客户端 live 目录的上游 /models handler。
             return Router::new()
                 .route("/v1/models", get(crate::manual::models))
+                .route("/backend-api/codex/models", get(crate::manual::codex_models))
                 .route("/v1/messages", post(handlers::handle_messages))
                 .route(
                     "/v1/chat/completions",
@@ -406,6 +412,14 @@ impl ProxyServer {
                 .route("/v1/responses", post(handlers::handle_responses))
                 .route(
                     "/v1/responses/compact",
+                    post(handlers::handle_responses_compact),
+                )
+                .route(
+                    "/backend-api/codex/responses",
+                    post(handlers::handle_responses),
+                )
+                .route(
+                    "/backend-api/codex/responses/compact",
                     post(handlers::handle_responses_compact),
                 )
                 .layer(DefaultBodyLimit::max(8 * 1024 * 1024))

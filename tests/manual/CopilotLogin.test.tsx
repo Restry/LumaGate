@@ -283,22 +283,23 @@ describe("Copilot 短登录流程", () => {
         return 1;
       }
     });
-    render(<ManualApp initialWorkspace="providers" />);
+    render(<ManualApp initialWorkspace="sources" />);
     await act(async () => {
       await Promise.resolve();
     });
     expect(starts()).toHaveLength(0);
-    await click(screen.getByRole("button", { name: "GitHub Copilot" }));
+    await click(screen.getByRole("button", { name: "接入 GitHub Copilot" }));
     await tick(0);
     expect(starts()).toHaveLength(1);
     await tick(5000);
     expect(
       screen.queryByRole("dialog", { name: "连接 GitHub Copilot" }),
     ).not.toBeInTheDocument();
+    await click(screen.getByRole("button", { name: "筛选来源 GitHub Copilot" }));
     expect(
       within(
         screen.getByRole("region", { name: "来源 GitHub Copilot" }),
-      ).getByText(/fixture-user/),
+      ).getAllByText(/fixture-user/)[0],
     ).toBeVisible();
     expect(snapshot.document.providers[0]).toEqual(original);
     const commands = rpc.mock.calls.map(([c]) => c);

@@ -28,7 +28,11 @@ pub fn test_target<'a>(
     let model = source
         .models
         .iter()
-        .find(|model| model.enabled && model.id == group.model.id)
+        .find(|model| {
+            model.enabled
+                && (model.id == group.model.id || group.model_ids.contains(&model.id))
+                && super::endpoints::protocol(model) == group.protocol
+        })
         .ok_or("该来源的模型已停用或删除")?;
     Ok((source, model))
 }
@@ -87,6 +91,99 @@ pub fn set_blocked(doc: &mut Document, model_id: &str, blocked: bool) -> Result<
     candidate.validate()?;
     *doc = candidate;
     Ok(())
+}
+
+/// 改本网关的部署候选。只代表是否参与路由候选，
+/// 不代表上游已经部署或已验证可用，也不改来源自身的启停。
+pub fn set_model_enabled(
+    doc: &mut Document,
+    provider_id: &str,
+    model_id: &str,
+    enabled: bool,
+) -> Result<(), String> {
+    let source = doc
+        .providers
+        .iter_mut()
+        .find(|s| s.id == provider_id)
+        .ok_or("来源不存在，请刷新后重试")?;
+    let model = source
+        .models
+        .iter_mut()
+        .find(|m| m.id == model_id)
+        .ok_or("该来源没有这个模型，请刷新模型目录")?;
+    model.enabled = enabled;
+    doc.validate()
+}
+
+/// 批量启用或停用指定来源的模型。
+pub fn set_models_enabled_batch(
+    doc: &mut Document,
+    provider_id: &str,
+    model_ids: Option<&[String]>,
+    enabled: bool,
+) -> Result<usize, String> {
+    let source = doc
+        .providers
+        .iter_mut()
+        .find(|s| s.id == provider_id)
+        .ok_or("来源不存在，请刷新后重试")?;
+    let mut changed = 0usize;
+    for model in &mut source.models {
+        let targeted = match model_ids {
+            Some(ids) => ids.iter().any(|id| id == &model.id),
+            None => true,
+        };
+        if targeted && model.enabled != enabled {
+            model.enabled = enabled;
+            changed += 1;
+        }
+    }
+    doc.validate()?;
+    Ok(changed)
+}
+
+/// 按给定模型名列表（如本地 Codex 当前模型目录）匹配并启用对应模型，未匹配的自动停用。
+/// 返回成功匹配并启用的去重模型数量。
+pub fn match_enabled_models(doc: &mut Document, target_names: &[String]) -> Result<usize, String> {
+    use std::collections::HashSet;
+    let normalized: HashSet<String> = target_names
+        .iter()
+        .map(|raw| {
+            let s = raw.trim();
+            super::catalog::canonical_model_id(s)
+                .rsplit('/')
+                .next()
+                .unwrap_or(s)
+                .to_ascii_lowercase()
+        })
+        .filter(|s| !s.is_empty())
+        .collect();
+    if normalized.is_empty() {
+        return Err("未提供可匹配的模型名称列表".into());
+    }
+    let exact: HashSet<String> = target_names
+        .iter()
+        .map(|s| s.trim().to_ascii_lowercase())
+        .filter(|s| !s.is_empty())
+        .collect();
+    let mut matched = HashSet::new();
+    for source in &mut doc.providers {
+        for model in &mut source.models {
+            let canonical = super::catalog::canonical_model_id(&model.id).to_ascii_lowercase();
+            let bare = canonical.rsplit('/').next().unwrap_or(&canonical);
+            let is_match = exact.contains(&model.id.to_ascii_lowercase())
+                || exact.contains(&canonical)
+                || normalized.contains(&canonical)
+                || normalized.contains(bare);
+            model.enabled = is_match;
+            if is_match {
+                doc.blocked_models.remove(&model.id);
+                matched.insert(canonical);
+            }
+        }
+    }
+    doc.validate()?;
+    Ok(matched.len())
 }
 
 pub fn set_cost_estimation(

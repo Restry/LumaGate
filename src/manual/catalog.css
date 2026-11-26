@@ -16,6 +16,7 @@
 .mg-header {
   height: 58px;
   min-height: 58px;
+  flex-shrink: 0;
 }
 .mg-gateway-location {
   display: flex;
@@ -71,6 +72,7 @@
   flex: 1;
   min-height: 0;
 }
+/* 整页不滚。列表和详情各自滚动，导航、页头、筛选和来源轨永远在视野里。 */
 .mg-catalog {
   container-type: inline-size;
   display: flex;
@@ -198,16 +200,57 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
+}
+/* 表头与数据行共用一套列宽变量，保证逐列对齐。
+   最后一列固定给行内开关，「屏蔽 / 纳入候选」的表头永远压在开关正上方。 */
+.mg-model-columns,
+.mc-model-list-row {
+  --mg-cols:
+    minmax(190px, 1.8fr) minmax(100px, 1fr)
+    76px 76px 84px minmax(120px, 1fr);
+  --mg-cols-compact: minmax(0, 1.6fr) minmax(0, 1fr);
+  --mg-col-switch: 64px;
+  display: grid;
+  align-items: center;
+  gap: 12px;
 }
 .mg-model-columns {
-  display: grid;
-  grid-template-columns: minmax(160px, 1fr) 140px 168px 14px;
-  align-items: center;
-  gap: 14px;
+  grid-template-columns: var(--mg-cols) var(--mg-col-switch);
 }
-.has-detail .mg-model-columns {
-  grid-template-columns: minmax(0, 1fr) 86px 108px 12px;
-  gap: 10px;
+.mc-model-list-row {
+  grid-template-columns: var(--mg-cols) var(--mg-col-switch);
+}
+/* 按钮占满除开关外的所有列，自身再按同一套变量分列。 */
+.mc-model-list-row > .mg-model-record {
+  grid-column: 1 / -2;
+  display: grid;
+  grid-template-columns: var(--mg-cols);
+  gap: inherit;
+  align-items: center;
+}
+.mc-model-list-row > [role="switch"] {
+  grid-column: -2 / -1;
+  justify-self: end;
+}
+/* 详情打开时只留「模型 / 来源 / 开关」。上下文、最大输出、路由、
+   上次测试都在详情面板里，留着只会把开关挤出画面。 */
+.has-detail .mg-model-columns,
+.has-detail .mc-model-list-row {
+  grid-template-columns: var(--mg-cols-compact) var(--mg-col-switch);
+}
+.has-detail .mc-model-list-row > .mg-model-record {
+  grid-template-columns: var(--mg-cols-compact);
+}
+.has-detail .mg-model-columns > :nth-child(3),
+.has-detail .mg-model-columns > :nth-child(4),
+.has-detail .mg-model-columns > :nth-child(5),
+.has-detail .mg-model-columns > :nth-child(6),
+.has-detail .mg-model-record > :nth-child(3),
+.has-detail .mg-model-record > :nth-child(4),
+.has-detail .mg-model-record > :nth-child(5),
+.has-detail .mg-model-record > :nth-child(6) {
+  display: none;
 }
 .mg-list-heading {
   display: flex;
@@ -220,12 +263,25 @@
   font-size: 11px;
   border-bottom: 1px solid var(--mg-line);
 }
+/* 列头钉在滚动区顶部。开关的语义标签必须始终和开关同屏。
+   display 必须写在这里：.mg-list-heading 的 flex 在后面声明。 */
 .mg-list-heading.mg-model-columns {
   display: grid;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--mg-side);
+}
+.mg-switch-col {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  justify-content: flex-end;
 }
 .mg-model-scroll {
   overflow-y: auto;
   overscroll-behavior: contain;
+  flex: 1 1 auto;
   min-height: 0;
   list-style: none;
   padding: 0;
@@ -233,19 +289,15 @@
   scrollbar-gutter: stable;
 }
 .mg-model-record {
-  width: 100%;
   min-height: 54px;
-  padding: 8px 16px;
+  padding: 8px 0;
   text-align: start;
   background: var(--mg-surface);
-  border-bottom: 1px solid var(--mg-line);
+  border: 0;
   transition: background-color 120ms;
 }
 .mg-model-records > li:last-child .mg-model-record {
   border-bottom: none;
-}
-.mg-model-record[data-selected="true"] {
-  background: var(--mg-selected);
 }
 .mg-record-name,
 .mg-record-sources {
@@ -298,12 +350,6 @@
 .is-passed {
   color: var(--mg-success);
 }
-.mg-record-chevron {
-  color: var(--mg-muted);
-}
-.mg-model-record[data-selected="true"] .mg-record-chevron {
-  color: var(--mg-brand);
-}
 .mg-model-record:focus-visible {
   outline-offset: -3px;
 }
@@ -329,6 +375,7 @@
 .mg-detail-body {
   overflow-y: auto;
   overscroll-behavior: contain;
+  flex: 1 1 auto;
   min-height: 0;
   padding: 20px;
 }
@@ -608,9 +655,6 @@
 .mg-workspace-alert p {
   line-height: 1.7;
   overflow-wrap: anywhere;
-}
-.mg-return-model {
-  margin: -8px 0 14px -8px;
 }
 .mg-providers-workspace,
 .mg-agents-workspace {
@@ -893,9 +937,23 @@
   .mg-detail-body {
     padding: 22px;
   }
-  .mg-model-columns {
-    grid-template-columns: minmax(0, 1fr) 94px 132px 12px;
+  .mg-model-columns,
+  .mc-model-list-row {
+    grid-template-columns: var(--mg-cols-compact) var(--mg-col-switch);
     gap: 10px;
+  }
+  .mc-model-list-row > .mg-model-record {
+    grid-template-columns: var(--mg-cols-compact);
+  }
+  .mg-model-columns > :nth-child(3),
+  .mg-model-columns > :nth-child(4),
+  .mg-model-columns > :nth-child(5),
+  .mg-model-columns > :nth-child(6),
+  .mg-model-record > :nth-child(3),
+  .mg-model-record > :nth-child(4),
+  .mg-model-record > :nth-child(5),
+  .mg-model-record > :nth-child(6) {
+    display: none;
   }
   .mg-catalog-toolbar > .mg-select {
     width: 140px;
@@ -929,11 +987,16 @@
     font-size: 12px;
     gap: 4px;
   }
-  .mg-model-columns {
-    grid-template-columns: minmax(0, 1fr) 82px 12px;
+  .mg-model-columns,
+  .mc-model-list-row {
+    grid-template-columns: minmax(0, 1fr) var(--mg-col-switch);
     gap: 8px;
   }
-  .mg-model-columns > :nth-child(2) {
+  .mc-model-list-row > .mg-model-record {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .mg-model-columns > :nth-child(2),
+  .mg-model-record > :nth-child(2) {
     display: none;
   }
   .mg-list-heading,

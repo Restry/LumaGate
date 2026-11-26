@@ -1,217 +1,561 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   ArrowDownToLine,
+  Check,
   CheckCircle2,
+  ChevronDown,
+  ChevronRight,
   Copy,
   Play,
-  Terminal,
+  RefreshCw,
+  Search,
+  Star,
+  Unlink,
+  Wand2,
 } from "lucide-react";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { ActionButton } from "./ui";
 import { checkedAtLabel } from "./catalog-view";
-import type { Agent, Group } from "./types";
+import { compactTokens } from "./log-usage";
+import {
+  displayModel,
+  groupModelIds,
+  protocolShortLabels,
+  type Agent,
+  type AgentsStatus,
+  type Group,
+} from "./types";
 
 export interface SyncReceipt {
   appliedAt: string;
   files: { path: string; backup: string | null }[];
 }
-export const agentInfo: {
+
+export interface AgentMeta {
   id: Agent;
   name: string;
-  summary: string;
-  steps: string[];
+  desc: string;
+  configPath: string;
   command?: string;
-}[] = [
+}
+
+export const agentInfo: AgentMeta[] = [
   {
-    id: "pi",
-    name: "Pi",
-    summary: "合并网关模型目录，保留默认 Provider 与模型。",
-    steps: [
-      "预览将合并到 Pi 的模型目录，确认后写入。",
-      "在 Pi 的模型选择器中选择本网关的模型；原默认选择不会被替换。",
-    ],
+    id: "codex",
+    name: "Codex",
+    desc: "OpenAI Codex 桌面端与 CLI（支持自动更新模型目录）",
+    configPath: "~/.codex/config.toml",
+    command: "codex --profile cc_switch_manual",
   },
   {
     id: "claude",
     name: "Claude Code",
-    summary: "同步连接信息与辅助模型清单，保留默认模型。",
-    steps: [
-      "预览并确认网关连接配置。辅助清单不是 Claude 的原生模型目录。",
-      "在 Claude Code 中使用 /model 选择网关模型 ID；若默认模型不在目录中，需要手动选择。",
-    ],
+    desc: "Anthropic Claude Code CLI",
+    configPath: "~/.claude/settings.json",
   },
   {
-    id: "codex",
-    name: "Codex",
-    summary: "一键写入网关 profile，不更换默认 Provider 或模型。",
-    steps: [
-      "预览并确认 cc_switch_manual profile 和兼容模型目录。若已有别的配置，会提示是否改写。",
-      "接入后点「启动 Codex」即自动带网关 profile 走网关，不用手改 config。下方命令是手动兜底。",
-    ],
-    command: "codex --profile cc_switch_manual",
+    id: "pi",
+    name: "Pi Agent",
+    desc: "Pi 编程代理（自动按协议分组写入模型）",
+    configPath: "~/.pi/agent/models.json",
+  },
+  {
+    id: "opencode",
+    name: "OpenCode",
+    desc: "OpenCode CLI（写入 provider.lumagate）",
+    configPath: "~/.config/opencode/opencode.jsonc",
+  },
+  {
+    id: "openclaw",
+    name: "OpenClaw",
+    desc: "OpenClaw Agent（合并写入 models.providers.lumagate）",
+    configPath: "~/.openclaw/openclaw.json",
+  },
+  {
+    id: "hermes",
+    name: "Hermes Agent",
+    desc: "Nous Hermes（写入 custom_providers）",
+    configPath: "~/.hermes/config.yaml",
+  },
+  {
+    id: "droid",
+    name: "Factory Droid",
+    desc: "Factory Droid CLI（写入 customModels）",
+    configPath: "~/.factory/settings.json",
   },
 ];
 
 export function AgentWorkspace({
+  agent: controlledAgent,
+  onAgentChange,
   disabled,
   canSync,
-  selectedModel,
+  activeGroups,
+  agentsStatus,
   receipts,
   onCopy,
   onModels,
   onLaunch,
   onSync,
+  onSyncNow,
+  onToggleAutoSync,
+  onDisconnectCodex,
+  onSetCodexDefaultModel,
+  onMatchCodexModels,
+  onBlockModel,
 }: {
+  agent?: Agent;
+  onAgentChange?: (agent: Agent | undefined) => void;
   disabled: boolean;
   canSync: boolean;
+  activeGroups: Group[];
+  agentsStatus?: AgentsStatus | null;
   selectedModel?: Group;
   receipts: Partial<Record<Agent, SyncReceipt>>;
   onCopy: (text: string, label: string) => void;
   onModels: () => void;
   onLaunch: (agent: Agent, name: string) => void;
   onSync: (agent: Agent) => void;
+  onSyncNow?: (agent: Agent) => void;
+  onToggleAutoSync?: (agent: Agent, enabled: boolean) => void;
+  onDisconnectCodex?: () => void;
+  onSetCodexDefaultModel?: (modelId: string) => void;
+  onMatchCodexModels?: (modelIds: string[]) => void;
+  onBlockModel?: (modelIds: string[], blocked: boolean) => void;
 }) {
-  const [agent, setAgent] = useState<Agent>("pi");
-  const item = agentInfo.find((entry) => entry.id === agent)!;
-  const receipt = receipts[agent];
+  const [expandedAgent, setExpandedAgent] = useState<Agent | null>(
+    controlledAgent ?? null,
+  );
+  const [modelsOpenFor, setModelsOpenFor] = useState<Agent | null>(null);
+  const [query, setQuery] = useState("");
+
+  const activeExpanded = controlledAgent ?? expandedAgent;
+
+  const setExpanded = (next: Agent | null) => {
+    setExpandedAgent(next);
+    if (onAgentChange) onAgentChange(next ?? undefined);
+  };
+
+  const codex = agentsStatus?.codex;
+
+  const getStatus = (id: Agent) => {
+    if (!agentsStatus) return null;
+    if (id === "codex") return agentsStatus.codex;
+    return agentsStatus[id] ?? null;
+  };
+
+  const isConnected = (id: Agent) => !!getStatus(id)?.connected;
+  const isInstalled = (id: Agent) => {
+    if (id === "codex") {
+      return !!(
+        codex?.connected ||
+        codex?.currentModel ||
+        codex?.currentBaseUrl ||
+        codex?.catalogPath
+      );
+    }
+    const st = getStatus(id);
+    return !!(st && ("installed" in st ? st.installed : false));
+  };
+  const getAutoSync = (id: Agent) => !!getStatus(id)?.autoSync;
+
+  const connectedCount = agentInfo.filter((a) => isConnected(a.id)).length;
+
+  const sortedAgents = useMemo(() => {
+    return [...agentInfo].sort((a, b) => {
+      const score = (id: Agent) =>
+        (isConnected(id) ? 2 : 0) + (isInstalled(id) ? 1 : 0);
+      return score(b.id) - score(a.id);
+    });
+  }, [agentsStatus]);
+
+  const filteredModels = useMemo(() => {
+    const q = query.trim().toLocaleLowerCase();
+    return activeGroups.filter((g) => {
+      if (!q) return true;
+      return `${displayModel(g)} ${g.publicId ?? ""} ${g.providerNames.join(" ")}`
+        .toLocaleLowerCase()
+        .includes(q);
+    });
+  }, [activeGroups, query]);
+
+  const codexStatusLabel = !codex
+    ? "未接入"
+    : codex.mode === "desktop"
+      ? "已接入（桌面端 + CLI）"
+      : codex.mode === "profile"
+        ? "已接入（Profile）"
+        : codex.catalogOwner === "magpie"
+          ? "由 Magpie 接管"
+          : codex.mode === "other"
+            ? "指向其他配置"
+            : "未接入";
+
   return (
-    <section className="mg-agents-workspace">
-      <div className="mg-page-heading">
+    <section className="mg-stage mg-agents-stage" aria-label="客户端配置">
+      <header className="mg-stage-header">
         <div>
-          <h1>客户端</h1>
-          <p>手动连接网关，保留你的默认选择。</p>
+          <h1>Agents</h1>
+          <p className="mg-stage-subtitle">
+            {`已接入 ${connectedCount} / ${agentInfo.length} 款 Agent · 当前有 ${activeGroups.length} 个可用模型 · 点击任意条目展开详情`}
+          </p>
         </div>
-      </div>
-      {selectedModel && (
-        <div className="mg-model-handoff">
-          <div>
-            <span>准备使用的模型</span>
-            <strong>{selectedModel.publicId ?? selectedModel.model.id}</strong>
-          </div>
-          <ActionButton
-            variant="outline"
-            size="sm"
-            onClick={() =>
-              onCopy(selectedModel.publicId ?? selectedModel.id, "模型 ID")
-            }
-          >
-            <Copy size={14} aria-hidden />
-            复制模型 ID
+        <div className="mg-heading-actions">
+          <ActionButton variant="outline" size="sm" onClick={onModels}>
+            管理 Providers
           </ActionButton>
         </div>
-      )}
+      </header>
+
       {!canSync && (
-        <div className="mg-inline-notice">
-          <p>还没有可同步的模型。先启用模型，再预览接入配置。</p>
-          <ActionButton size="sm" variant="outline" onClick={onModels}>
-            选择模型
+        <div className="mg-inline-banner" role="status">
+          <span>还没有可用模型，接入前请先在 Providers 中启用来源和模型。</span>
+          <ActionButton size="sm" onClick={onModels}>
+            去配置模型
           </ActionButton>
         </div>
       )}
-      <Tabs
-        orientation="vertical"
-        value={agent}
-        onValueChange={(value) => setAgent(value as Agent)}
-      >
-        <TabsList className="mg-view-tabs" aria-label="选择 Agent">
-          {agentInfo.map((entry) => (
-            <TabsTrigger
-              className="mg-view-tab"
-              key={entry.id}
-              value={entry.id}
+
+      <div className="mg-accordion-list" role="list" aria-label="支持接入的 Agent">
+        {sortedAgents.map((item) => {
+          const connected = isConnected(item.id);
+          const installed = isInstalled(item.id);
+          const autoSync = getAutoSync(item.id);
+          const expanded = activeExpanded === item.id;
+          const receipt = receipts[item.id];
+          const status = getStatus(item.id);
+          const showForeignMatchBanner =
+            item.id === "codex" &&
+            codex &&
+            codex.catalogOwner !== "lumagate" &&
+            codex.catalogModels.length > 0 &&
+            !!onMatchCodexModels;
+          const modelsOpen = modelsOpenFor === item.id;
+
+          const summarySub =
+            item.id === "codex" && codex?.currentModel
+              ? `默认模型 ${codex.currentModel} · ${item.configPath}`
+              : item.desc;
+
+          return (
+            <article
+              key={item.id}
+              role="listitem"
+              className={`mg-acc-item ${expanded ? "is-expanded" : ""}`}
+              aria-label={`Agent ${item.name}`}
             >
-              {entry.name}
-            </TabsTrigger>
-          ))}
-        </TabsList>
-        <TabsContent value={agent} className="mg-agent-panel">
-          <header>
-            <Terminal size={24} aria-hidden />
-            <div>
-              <h2>{item.name}</h2>
-              <p>{item.summary}</p>
-            </div>
-          </header>
-          <ol className="mg-connection-steps">
-            <li>
-              <strong>预览并确认</strong>
-              <p>{item.steps[0]}</p>
-            </li>
-            <li>
-              <strong>在客户端使用</strong>
-              <p>{item.steps[1]}</p>
-              {item.command && (
-                <div className="mg-command">
-                  <code>{item.command}</code>
-                  <ActionButton
-                    variant="outline"
-                    size="sm"
-                    onClick={() => onCopy(item.command!, "网关启动命令")}
-                    aria-label="复制网关启动命令"
-                  >
-                    <Copy size={14} aria-hidden />
-                    复制命令
-                  </ActionButton>
+              {/* Collapsed Summary Row (Tier 1) */}
+              <div className="mg-acc-summary">
+                <button
+                  type="button"
+                  className="mg-acc-trigger"
+                  aria-expanded={expanded}
+                  aria-label={`展开 ${item.name}`}
+                  onClick={() => setExpanded(expanded ? null : item.id)}
+                >
+                  <span className="mg-acc-chevron" aria-hidden>
+                    {expanded ? (
+                      <ChevronDown size={15} />
+                    ) : (
+                      <ChevronRight size={15} />
+                    )}
+                  </span>
+                  <i
+                    className={`mg-status-dot ${connected ? "is-on" : ""}`}
+                    aria-hidden
+                  />
+                  <span className="mg-acc-identity">
+                    <span className="mg-acc-title-line">
+                      <strong>{item.name}</strong>
+                      <span
+                        className={`mg-pill ${connected ? "is-ok" : item.id === "codex" && codex?.mode === "other" ? "is-warn" : ""}`}
+                      >
+                        {item.id === "codex"
+                          ? codexStatusLabel
+                          : connected
+                            ? "已接入"
+                            : installed
+                              ? "本机已装"
+                              : "未接入"}
+                      </span>
+                      {connected && autoSync && (
+                        <span className="mg-pill is-subtle">自动同步</span>
+                      )}
+                    </span>
+                    <small className="mg-acc-meta">{summarySub}</small>
+                  </span>
+                </button>
+
+                <div className="mg-acc-right">
+                  {!connected ? (
+                    <ActionButton
+                      size="sm"
+                      disabled={disabled || !canSync}
+                      aria-label={`一键接入 ${item.name}`}
+                      onClick={() => onSync(item.id)}
+                    >
+                      <ArrowDownToLine size={13} aria-hidden />
+                      一键接入
+                    </ActionButton>
+                  ) : (
+                    <>
+                      <ActionButton
+                        size="sm"
+                        variant="outline"
+                        disabled={disabled || !canSync}
+                        onClick={() =>
+                          onSyncNow ? onSyncNow(item.id) : onSync(item.id)
+                        }
+                      >
+                        <RefreshCw size={12} aria-hidden />
+                        同步
+                      </ActionButton>
+                      <ActionButton
+                        size="sm"
+                        variant="ghost"
+                        disabled={disabled}
+                        aria-label={`启动 ${item.name}`}
+                        title={`在终端启动 ${item.name}`}
+                        onClick={() => onLaunch(item.id, item.name)}
+                      >
+                        <Play size={13} aria-hidden />
+                      </ActionButton>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {/* Expanded Detail Panel (Tier 2) */}
+              {expanded && (
+                <div className="mg-acc-body mg-agent-detail">
+                  <div className="mg-agent-detail-bar">
+                    <div className="mg-agent-detail-kv">
+                      <span>
+                        配置文件：<code>{item.configPath}</code>
+                      </span>
+                      {status?.currentBaseUrl && (
+                        <span>
+                          当前接口：<code>{status.currentBaseUrl}</code>
+                        </span>
+                      )}
+                      {item.command && (
+                        <button
+                          type="button"
+                          className="mg-inline-copy"
+                          aria-label="复制网关启动命令"
+                          onClick={() =>
+                            onCopy(item.command!, `${item.name} 启动命令`)
+                          }
+                        >
+                          <Copy size={11} aria-hidden />
+                          <code>{item.command}</code>
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="mg-agent-detail-controls">
+                      {onToggleAutoSync && (
+                        <label className="mg-inline-switch">
+                          <span>模型变更自动更新</span>
+                          <Switch
+                            checked={autoSync}
+                            disabled={disabled}
+                            aria-label={`${item.name} 自动更新可用模型`}
+                            onCheckedChange={(next) =>
+                              onToggleAutoSync(item.id, next)
+                            }
+                          />
+                        </label>
+                      )}
+                      <ActionButton
+                        size="sm"
+                        variant="outline"
+                        disabled={disabled}
+                        onClick={() => onLaunch(item.id, item.name)}
+                      >
+                        <Play size={12} aria-hidden />
+                        启动 {item.name}
+                      </ActionButton>
+                      {item.id === "codex" && connected && onDisconnectCodex && (
+                        <ActionButton
+                          size="sm"
+                          variant="ghost"
+                          disabled={disabled}
+                          onClick={onDisconnectCodex}
+                        >
+                          <Unlink size={12} aria-hidden />
+                          断开还原
+                        </ActionButton>
+                      )}
+                    </div>
+                  </div>
+
+                  {showForeignMatchBanner && (
+                    <div className="mg-local-match-bar">
+                      <div className="mg-local-match-text">
+                        <Wand2 size={14} aria-hidden />
+                        <span>
+                          检测到本机 Codex 当前配置了{" "}
+                          <strong>{codex.catalogModels.length}</strong> 个模型（
+                          {codex.catalogOwner === "magpie" ? "Magpie" : "本机目录"}），
+                          可一键在 LumaGate 中匹配启用同名模型。
+                        </span>
+                      </div>
+                      <ActionButton
+                        size="sm"
+                        variant="outline"
+                        disabled={disabled}
+                        onClick={() => onMatchCodexModels(codex.catalogModels)}
+                      >
+                        按本机列表匹配启用
+                      </ActionButton>
+                    </div>
+                  )}
+
+                  {receipt && (
+                    <section
+                      className="mg-sync-toast"
+                      aria-label={`${item.name} 同步结果`}
+                    >
+                      <div className="mg-sync-toast-head">
+                        <CheckCircle2 size={14} aria-hidden />
+                        <span>
+                          本次会话已同步 · {checkedAtLabel(receipt.appliedAt)} · 写入{" "}
+                          {receipt.files.length} 个文件（不代表客户端已连接）
+                        </span>
+                      </div>
+                      {receipt.files.length > 0 && (
+                        <details className="mg-sync-toast-files">
+                          <summary>查看写入文件与备份</summary>
+                          <ul>
+                            {receipt.files.map((file) => (
+                              <li key={file.path}>
+                                <code>{file.path}</code>
+                                {file.backup && <span>备份：{file.backup}</span>}
+                              </li>
+                            ))}
+                          </ul>
+                        </details>
+                      )}
+                    </section>
+                  )}
+
+                  {/* Tier 3: Collapsible model list for this Agent */}
+                  <div className="mg-sub-disclosure">
+                    <button
+                      type="button"
+                      className="mg-sub-disclosure-trigger"
+                      aria-expanded={modelsOpen}
+                      onClick={() =>
+                        setModelsOpenFor(modelsOpen ? null : item.id)
+                      }
+                    >
+                      {modelsOpen ? (
+                        <ChevronDown size={14} aria-hidden />
+                      ) : (
+                        <ChevronRight size={14} aria-hidden />
+                      )}
+                      <span>
+                        {item.name} 可用模型（{activeGroups.length}）
+                      </span>
+                      <small>
+                        {item.id === "codex"
+                          ? "点击展开可设默认模型、复制 ID 或停用"
+                          : "点击展开查看或复制同步到此 Agent 的模型"}
+                      </small>
+                    </button>
+
+                    {modelsOpen && (
+                      <div className="mg-sub-disclosure-body">
+                        <div className="mg-sub-search">
+                          <Search size={13} aria-hidden />
+                          <Input
+                            type="search"
+                            aria-label={`搜索 ${item.name} 可用模型`}
+                            placeholder="搜索可用模型…"
+                            value={query}
+                            onChange={(e) => setQuery(e.target.value)}
+                          />
+                        </div>
+                        <ul
+                          className="mg-client-model-list"
+                          aria-label={`${item.name} 模型清单`}
+                        >
+                          {filteredModels.map((group) => {
+                            const slug = group.publicId ?? displayModel(group);
+                            const isDefault =
+                              item.id === "codex" && codex?.currentModel === slug;
+                            return (
+                              <li key={group.id} className="mg-client-model-row">
+                                <div className="mg-client-model-main">
+                                  <div className="mg-client-model-name">
+                                    <strong>{displayModel(group)}</strong>
+                                    <span className="mg-proto-tag">
+                                      {protocolShortLabels[group.protocol]}
+                                    </span>
+                                    {isDefault && (
+                                      <span className="mg-default-tag">
+                                        <Check size={11} aria-hidden />
+                                        当前默认
+                                      </span>
+                                    )}
+                                  </div>
+                                  <small>
+                                    {group.providerNames.join(" · ")}
+                                    {group.model.contextWindow
+                                      ? ` · ${compactTokens(group.model.contextWindow)}`
+                                      : ""}
+                                  </small>
+                                </div>
+                                <div className="mg-client-model-actions">
+                                  {item.id === "codex" &&
+                                    onSetCodexDefaultModel &&
+                                    !isDefault && (
+                                      <ActionButton
+                                        variant="ghost"
+                                        size="sm"
+                                        disabled={disabled}
+                                        onClick={() => onSetCodexDefaultModel(slug)}
+                                      >
+                                        <Star size={12} aria-hidden />
+                                        设为默认
+                                      </ActionButton>
+                                    )}
+                                  <ActionButton
+                                    variant="ghost"
+                                    size="icon"
+                                    aria-label={`复制模型 ID ${slug}`}
+                                    title="复制模型 ID"
+                                    onClick={() => onCopy(slug, "模型 ID")}
+                                  >
+                                    <Copy size={13} />
+                                  </ActionButton>
+                                  {onBlockModel && (
+                                    <Switch
+                                      checked={true}
+                                      disabled={disabled}
+                                      aria-label={`停用模型 ${displayModel(group)}`}
+                                      onCheckedChange={(next) => {
+                                        if (!next)
+                                          onBlockModel(groupModelIds(group), true);
+                                      }}
+                                    />
+                                  )}
+                                </div>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
-            </li>
-          </ol>
-          <div className="mg-agent-panel-actions">
-            <ActionButton
-              disabled={disabled || !canSync}
-              onClick={() => onSync(agent)}
-            >
-              <ArrowDownToLine size={15} aria-hidden />
-              预览同步
-            </ActionButton>
-            <ActionButton
-              variant="outline"
-              disabled={disabled}
-              onClick={() => onLaunch(agent, item.name)}
-            >
-              <Play size={14} aria-hidden />
-              启动 {item.name}
-            </ActionButton>
-            <span>启动只打开客户端，不写入配置。已接入网关时自动带 profile。</span>
-          </div>
-          {receipt && (
-            <section
-              className="mg-sync-receipt"
-              aria-label={`${item.name} 同步结果`}
-            >
-              <div className="mg-result-heading">
-                <CheckCircle2 size={17} aria-hidden />
-                <h3>本次会话已同步</h3>
-              </div>
-              <p>
-                <time dateTime={receipt.appliedAt}>
-                  {checkedAtLabel(receipt.appliedAt)}
-                </time>{" "}
-                · 已写入 {receipt.files.length} 个文件，不代表客户端已连接。
-              </p>
-              <details>
-                <summary>查看写入文件与备份</summary>
-                <ul>
-                  {receipt.files.map((file) => (
-                    <li key={file.path}>
-                      <code>{file.path}</code>
-                      <span>
-                        {file.backup
-                          ? `备份：${file.backup}`
-                          : "新建文件，无旧文件备份"}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              </details>
-            </section>
-          )}
-        </TabsContent>
-      </Tabs>
-      <p className="mg-agent-footnote">
-        只有确认同步才会写入 Agent 配置；不会改动 MCP、Skills 或
-        Prompts。实际请求是否经过本网关，请在调用日志中核对。
-      </p>
+            </article>
+          );
+        })}
+      </div>
     </section>
   );
 }

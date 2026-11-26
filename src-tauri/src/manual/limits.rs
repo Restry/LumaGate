@@ -45,7 +45,7 @@ pub fn matches(id: &str) -> bool {
 
 pub fn apply(model: &mut Model) {
     model.limits_source = None;
-    if !model.id.starts_with("copilot/") && matches(&model.id) {
+    if !model.id.starts_with("copilot/") && !model.id.starts_with("codex/") && matches(&model.id) {
         model.context_window = Some(CONTEXT_WINDOW);
         model.max_output_tokens = Some(MAX_OUTPUT_TOKENS);
         model.limits_source = Some(LimitSource::UserOverride);

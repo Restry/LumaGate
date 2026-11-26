@@ -478,6 +478,9 @@ async fn listener_changes_remain_manual_and_occupied_ports_do_not_report_running
         copilot: Arc::new(crate::manual::copilot::Manager::new(
             f.directory.path().join("copilot"),
         )),
+        codex: Arc::new(crate::manual::codex_sub::Manager::new(
+            f.directory.path().join("codex"),
+        )),
         logs: std::sync::Mutex::new(Arc::new(
             crate::manual::logs::RequestLogs::open(&f.directory.path().join("logs")).unwrap(),
         )),
@@ -533,6 +536,9 @@ async fn unavailable_log_store_keeps_state_inspectable_but_does_not_start_a_sile
         copilot: Arc::new(crate::manual::copilot::Manager::new(
             f.directory.path().join("copilot"),
         )),
+        codex: Arc::new(crate::manual::codex_sub::Manager::new(
+            f.directory.path().join("codex"),
+        )),
         logs: std::sync::Mutex::new(Arc::new(crate::manual::logs::RequestLogs::unavailable(
             "fixture corrupt database".into(),
         ))),
@@ -560,6 +566,9 @@ async fn network_changes_invalidate_sync_plans_but_key_changes_do_not_modify_age
         db: f.db.clone(),
         copilot: Arc::new(crate::manual::copilot::Manager::new(
             f.directory.path().join("copilot"),
+        )),
+        codex: Arc::new(crate::manual::codex_sub::Manager::new(
+            f.directory.path().join("codex"),
         )),
         logs: std::sync::Mutex::new(Arc::new(crate::manual::logs::RequestLogs::default())),
         drain: Arc::new(crate::manual::drain::Gate::default()),

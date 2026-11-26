@@ -348,6 +348,7 @@ mod tests {
             azure_tenant_id: None,
             azure_client_id: None,
             copilot: None,
+            codex: None,
             protocol: Protocol::OpenaiResponses,
             enabled: true,
             cost_estimation_enabled: true,

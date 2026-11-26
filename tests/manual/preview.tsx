@@ -54,6 +54,65 @@ const snapshot: Snapshot = {
   groups: [],
   status: { running: true },
   baseUrl: "http://127.0.0.1:15722",
+  codexAuth: {
+    connected: false,
+    email: null,
+    plan: null,
+    accountId: null,
+    source: null,
+    message: null,
+    localAvailable: true,
+    localEmail: "demo@example.com",
+  },
+  agents: {
+    codex: {
+      connected: true,
+      mode: "desktop",
+      currentModel: "gpt-5.4",
+      currentBaseUrl: "http://127.0.0.1:15722/v1",
+      catalogPath: "~/.codex/lumagate-models.json",
+      catalogOwner: "lumagate",
+      catalogModels: ["gpt-5.4", "gpt-5.3-codex", "claude-sonnet-4-6"],
+      autoSync: true,
+      canRestore: true,
+    },
+    claude: {
+      connected: false,
+      installed: true,
+      currentBaseUrl: null,
+      autoSync: false,
+    },
+    pi: {
+      connected: false,
+      installed: true,
+      currentBaseUrl: null,
+      autoSync: false,
+    },
+    opencode: {
+      connected: false,
+      installed: true,
+      currentBaseUrl: null,
+      autoSync: false,
+    },
+    openclaw: {
+      connected: false,
+      installed: true,
+      currentBaseUrl: null,
+      autoSync: false,
+    },
+    hermes: {
+      connected: true,
+      installed: true,
+      currentBaseUrl: "http://127.0.0.1:15722/v1",
+      autoSync: true,
+    },
+    droid: {
+      connected: false,
+      installed: false,
+      currentBaseUrl: null,
+      autoSync: false,
+    },
+  },
   network: {
     saved: {
       revision: 0,
@@ -297,6 +356,125 @@ mockIPC(async (command, raw) => {
       },
     });
   }
+  if (command === "manual_codex_import_local") {
+    if (!snapshot.document.providers.some((p) => p.codex)) {
+      snapshot.document.providers.push({
+        id: "codex-personal",
+        name: "Codex 订阅",
+        baseUrl: "https://chatgpt.com/backend-api/codex",
+        keyEnv: "",
+        protocol: "openai_responses",
+        enabled: true,
+        codex: {
+          accountId: "fixture-codex-acct",
+          grantId: "fixture-codex-grant",
+        },
+        models: [],
+      });
+    }
+    snapshot.codexAuth = {
+      connected: true,
+      email: "demo@example.com",
+      plan: "plus",
+      accountId: "fixture-codex-acct",
+      source: "local_cli",
+      message: null,
+      localAvailable: true,
+      localEmail: "demo@example.com",
+    };
+    snapshot.document.revision += 1;
+    return {
+      state: "connected",
+      providerId: "codex-personal",
+      email: "demo@example.com",
+      plan: "plus",
+    };
+  }
+  if (command === "manual_codex_start") {
+    return {
+      flowId: "fixture-codex-flow",
+      authUrl: "https://auth.openai.com/oauth/authorize",
+      expiresIn: 600,
+    };
+  }
+  if (command === "manual_codex_poll") {
+    return { state: "pending" };
+  }
+  if (command === "manual_codex_cancel" || command === "manual_codex_open_login")
+    return;
+  if (command === "manual_codex_disconnect") {
+    snapshot.document.providers = snapshot.document.providers.filter(
+      (p) => !p.codex,
+    );
+    snapshot.groups = snapshot.groups.filter(
+      (g) => !g.model.id.startsWith("codex/"),
+    );
+    snapshot.codexAuth = {
+      connected: false,
+      email: null,
+      plan: null,
+      accountId: null,
+      source: null,
+      message: null,
+      localAvailable: true,
+      localEmail: "demo@example.com",
+    };
+    snapshot.document.revision += 1;
+    return;
+  }
+  if (command === "manual_set_model_enabled") {
+    const source = snapshot.document.providers.find(
+      (p) => p.id === args.providerId,
+    );
+    if (source) {
+      const m = source.models.find((item) => item.id === args.modelId);
+      if (m) m.enabled = args.enabled;
+      snapshot.document.revision += 1;
+    }
+    return;
+  }
+  if (command === "manual_set_models_enabled_batch") {
+    const source = snapshot.document.providers.find(
+      (p) => p.id === args.providerId,
+    );
+    let changed = 0;
+    if (source) {
+      for (const m of source.models) {
+        if (!args.modelIds || args.modelIds.includes(m.id)) {
+          if (m.enabled !== args.enabled) {
+            m.enabled = args.enabled;
+            changed++;
+          }
+        }
+      }
+      snapshot.document.revision += 1;
+    }
+    return changed;
+  }
+  if (command === "manual_set_auto_sync") {
+    if (snapshot.agents) {
+      snapshot.agents[args.agent as "codex" | "claude" | "pi"].autoSync =
+        args.enabled;
+    }
+    return {
+      codex: !!snapshot.agents?.codex.autoSync,
+      claude: !!snapshot.agents?.claude.autoSync,
+      pi: !!snapshot.agents?.pi.autoSync,
+    };
+  }
+  if (command === "manual_sync_now") return [];
+  if (command === "manual_disconnect_codex") {
+    if (snapshot.agents) {
+      snapshot.agents.codex.connected = false;
+      snapshot.agents.codex.mode = "official";
+    }
+    return "已还原 Codex 官方配置";
+  }
+  if (command === "manual_set_codex_default_model") {
+    if (snapshot.agents) snapshot.agents.codex.currentModel = args.modelId;
+    return;
+  }
+  if (command === "manual_match_codex_models") return args.modelIds?.length ?? 0;
   if (command === "manual_copilot_start") {
     copilotFlow += 1;
     return {
@@ -460,11 +638,13 @@ mockIPC(async (command, raw) => {
     return;
   }
   if (command === "manual_set_model_blocked") {
-    for (const group of snapshot.groups)
-      if (group.model.id === args.modelId) group.blocked = args.blocked;
+    const ids: string[] = args.modelIds ?? (args.modelId ? [args.modelId] : []);
+    for (const group of snapshot.groups) {
+      if (ids.includes(group.model.id)) group.blocked = args.blocked;
+    }
     snapshot.document.blockedModels = args.blocked
-      ? [...snapshot.document.blockedModels!, args.modelId]
-      : snapshot.document.blockedModels!.filter((id) => id !== args.modelId);
+      ? [...new Set([...(snapshot.document.blockedModels ?? []), ...ids])]
+      : (snapshot.document.blockedModels ?? []).filter((id) => !ids.includes(id));
     snapshot.document.revision += 1;
     return;
   }
@@ -494,6 +674,34 @@ mockIPC(async (command, raw) => {
     const source = snapshot.document.providers.find(
       (p) => p.id === args.providerId,
     );
+    if (source?.codex) {
+      source.models = ["gpt-5.4", "gpt-5.3-codex", "gpt-5.2"].map((id) => ({
+        id: `codex/${id}`,
+        name: id,
+        protocolOverride: "openai_responses",
+        contextWindow: 272000,
+        maxOutputTokens: 128000,
+        image: true,
+        tools: true,
+        enabled: true,
+      }));
+      snapshot.groups = snapshot.groups.filter(
+        (g) => !g.model.id.startsWith("codex/"),
+      );
+      source.models.forEach((model) =>
+        snapshot.groups.push({
+          id: `${model.id}--fixture`,
+          publicId: model.id.replace(/^codex\//, ""),
+          model,
+          protocol: "openai_responses",
+          protocolMode: "manual",
+          providerIds: [source.id],
+          providerNames: [source.name],
+          policy: { balance: "round_robin", failover: true, fallbacks: [] },
+        }),
+      );
+      snapshot.document.revision += 1;
+    }
     if (source?.copilot) {
       if (params.get("copilot") === "catalog-error")
         throw new Error("目录暂不可用（隔离演示）");
@@ -563,7 +771,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
           ? "overview"
           : params.has("logs")
             ? "logs"
-            : "models"
+            : "sources"
       }
     />
     <span

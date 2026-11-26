@@ -19,12 +19,16 @@ pub struct ManualRoutes {
     db: Option<Arc<crate::database::Database>>,
     restore_failed: bool,
     copilot: std::sync::OnceLock<Arc<super::copilot::Manager>>,
+    codex: std::sync::OnceLock<Arc<super::codex_sub::Manager>>,
     session_locks: Mutex<HashMap<String, Weak<AsyncMutex<()>>>>,
 }
 
 impl ManualRoutes {
     pub fn attach_copilot(&self, manager: Arc<super::copilot::Manager>) {
         let _ = self.copilot.set(manager);
+    }
+    pub fn attach_codex(&self, manager: Arc<super::codex_sub::Manager>) {
+        let _ = self.codex.set(manager);
     }
     pub fn with_db(db: Arc<crate::database::Database>) -> Self {
         let loaded = match db.get_setting(AFFINITY_KEY) {
@@ -257,10 +261,12 @@ impl ManualRoutes {
                         .iter()
                         .find(|source| &source.id == *id)
                         .and_then(|source| {
-                            source
-                                .models
-                                .iter()
-                                .find(|model| model.id == group.model.id)
+                            source.models.iter().find(|model| {
+                                model.enabled
+                                    && (model.id == group.model.id
+                                        || group.model_ids.contains(&model.id))
+                                    && super::endpoints::protocol(model) == group.protocol
+                            })
                         })
                         .is_some_and(|model| super::modalities::supports_request(model, body))
                 })
@@ -306,16 +312,28 @@ impl ManualRoutes {
                 let model = source
                     .models
                     .iter()
-                    .find(|model| model.id == group.model.id)
+                    .find(|model| {
+                        model.enabled
+                            && (model.id == group.model.id
+                                || group.model_ids.contains(&model.id))
+                            && super::endpoints::protocol(model) == group.protocol
+                    })
                     .ok_or_else(|| ProxyError::ConfigError("模型部署已变化".into()))?
                     .clone();
                 let app_name = app.to_string();
                 let managed_copilot = source.copilot.is_some();
+                let managed_codex = source.codex.is_some();
                 let resolved = if source.copilot.is_some() {
                     let manager = self
                         .copilot
                         .get()
                         .ok_or_else(|| ProxyError::AuthError("Copilot 认证模块未连接".into()))?;
+                    manager.provider(&source, &model, &app_name).await
+                } else if source.codex.is_some() {
+                    let manager = self
+                        .codex
+                        .get()
+                        .ok_or_else(|| ProxyError::AuthError("Codex 订阅认证模块未连接".into()))?;
                     manager.provider(&source, &model, &app_name).await
                 } else {
                     tokio::task::spawn_blocking(move || {
@@ -326,7 +344,9 @@ impl ManualRoutes {
                 };
                 let mut candidate = match resolved {
                     Ok(candidate) => candidate,
-                    Err(error) if managed_copilot => return Err(ProxyError::AuthError(error)),
+                    Err(error) if managed_copilot || managed_codex => {
+                        return Err(ProxyError::AuthError(error))
+                    }
                     Err(_) if root.policy.failover && !opaque && !locked => continue,
                     Err(error) => return Err(ProxyError::ConfigError(error)),
                 };

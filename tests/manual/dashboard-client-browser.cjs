@@ -149,18 +149,14 @@ fs.mkdirSync(out, { recursive: true });
       },
     );
     await step(
-      "Provider search and model selection preserve the explicit save boundary",
+      "Source rail and bulk candidate selection preserve the explicit save boundary",
       async () => {
-        await nav("Provider");
+        await nav("来源与模型");
         await p
-          .getByRole("textbox", { name: "搜索 Provider", exact: true })
-          .fill("Forge");
-        assert.equal(await p.locator(".mc-provider-choice").count(), 1);
-        await p
-          .getByRole("button", { name: "选择来源 Forge API", exact: true })
+          .getByRole("button", { name: "筛选来源 Forge API", exact: true })
           .click();
         await p
-          .getByRole("button", { name: "选择 Forge API 的模型", exact: true })
+          .getByRole("button", { name: "批量选择候选", exact: true })
           .click();
         const dialog = p.getByRole("dialog");
         await dialog.waitFor();
@@ -172,17 +168,14 @@ fs.mkdirSync(out, { recursive: true });
           ),
         );
         await p
-          .getByRole("textbox", { name: "搜索 Provider", exact: true })
-          .fill("");
-        await p
-          .getByRole("button", { name: "选择来源 North Lab", exact: true })
+          .getByRole("button", { name: "筛选来源 North Lab", exact: true })
           .click();
       },
     );
     await step(
       "Model detail reveals source-specific test controls without automatically testing",
       async () => {
-        await nav("模型");
+        await nav("来源与模型");
         const count = (await p.evaluate(() => window.__fixtureCalls)).filter(
           (c) => c === "manual_test",
         ).length;
@@ -235,8 +228,7 @@ fs.mkdirSync(out, { recursive: true });
     for (const [id, name] of [
       ["overview", "概览"],
       ["logs", "调用日志"],
-      ["providers", "Provider"],
-      ["models", "模型"],
+      ["sources", "来源与模型"],
       ["agents", "客户端"],
       ["settings", "设置"],
       ["help", "帮助"],

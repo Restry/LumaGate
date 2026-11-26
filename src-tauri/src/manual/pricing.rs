@@ -324,14 +324,10 @@ impl Estimate {
             .unwrap_or("");
         // Native Copilot dispatch sends the bare ID and the logger adds this reserved
         // namespace. Its stable provider ID survives deletion and legacy projections.
-        let model = if meter
-            .provider
-            .as_ref()
-            .is_some_and(|(id, _)| id == super::copilot::PROVIDER_ID)
-        {
-            model.strip_prefix("copilot/").unwrap_or(model)
-        } else {
-            model
+        let model = match meter.provider.as_ref().map(|(id, _)| id.as_str()) {
+            Some(super::copilot::PROVIDER_ID) => model.strip_prefix("copilot/").unwrap_or(model),
+            Some(super::codex_sub::PROVIDER_ID) => model.strip_prefix("codex/").unwrap_or(model),
+            _ => model,
         };
         let Some(price) = catalog.models.get(model) else {
             self.excluded += 1;

@@ -1246,6 +1246,14 @@ impl RequestForwarder {
             .settings_config
             .get("manual_copilot_token")
             .and_then(Value::as_str);
+        let manual_codex_oauth_token = provider
+            .settings_config
+            .get("manual_codex_oauth_token")
+            .and_then(Value::as_str);
+        let manual_codex_account_id = provider
+            .settings_config
+            .get("manual_codex_account_id")
+            .and_then(Value::as_str);
 
         // Codex upstream conversion mode — computed early because the [1m]-suffix strip
         // below must be skipped on the Anthropic path (the marker has to survive to
@@ -1551,6 +1559,9 @@ impl RequestForwarder {
         let url = if manual_copilot_token.is_some() {
             crate::manual::copilot::inference_url(&base_url, &effective_endpoint)
                 .map_err(ProxyError::InvalidRequest)?
+        } else if manual_codex_oauth_token.is_some() {
+            crate::manual::codex_sub::inference_url(&base_url, &effective_endpoint)
+                .map_err(ProxyError::InvalidRequest)?
         } else if matches!(resolved_claude_api_format.as_deref(), Some("gemini_native")) {
             super::gemini_url::resolve_gemini_native_url(
                 &base_url,
@@ -1700,6 +1711,10 @@ impl RequestForwarder {
             mapped_body
         };
 
+        if manual_codex_oauth_token.is_some() && adapter.name() != "Claude" {
+            crate::manual::codex_sub::normalize_responses_request(&mut request_body);
+        }
+
         if super::providers::native_responses_identity::request_enabled(provider, endpoint) {
             self.native_responses_identity
                 .restore_request(
@@ -1806,6 +1821,18 @@ impl RequestForwarder {
         let mut auth_headers = if let Some(token) = manual_copilot_token {
             log_secrets.push(token.to_string());
             crate::manual::copilot::headers(token)
+                .map_err(ProxyError::AuthError)?
+                .iter()
+                .map(|(name, value)| (name.clone(), value.clone()))
+                .collect()
+        } else if let Some(token) = manual_codex_oauth_token {
+            log_secrets.push(token.to_string());
+            let account_id = manual_codex_account_id.unwrap_or_default();
+            if !account_id.is_empty() {
+                codex_oauth_account_id = Some(account_id.to_string());
+            }
+            should_send_codex_oauth_session_headers = true;
+            crate::manual::codex_sub::headers(token, account_id)
                 .map_err(ProxyError::AuthError)?
                 .iter()
                 .map(|(name, value)| (name.clone(), value.clone()))

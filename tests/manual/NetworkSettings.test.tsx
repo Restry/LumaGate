@@ -292,7 +292,7 @@ describe("多密钥与网络设置", () => {
     await allowLan(user);
     await add(user, "Laptop");
     expect(port).toHaveValue("18080");
-    await user.click(screen.getByRole("button", { name: "模型" }));
+    await user.click(screen.getByRole("button", { name: "来源与模型" }));
     await user.click(screen.getByRole("button", { name: "设置" }));
     await user.click(screen.getByRole("button", { name: "保存网络设置" }));
     await waitFor(() =>

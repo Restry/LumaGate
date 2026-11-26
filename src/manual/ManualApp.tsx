@@ -1,15 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
-import { ArrowLeft, RefreshCw } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   Shell,
-  ProviderList,
   type ProviderFeedback,
   type Workspace,
 } from "./workspaces";
-import { ModelCatalog } from "./ModelCatalog";
+import { SourceWorkbench } from "./SourceWorkbench";
 import { NetworkSettings } from "./NetworkSettings";
 import { initialCatalogView } from "./catalog-view";
 import { Updates, UpdateBanner } from "./Updates";
@@ -25,11 +24,13 @@ import {
 } from "./dialogs";
 import { ActionButton, Modal, Notifications } from "./ui";
 import { CopilotLogin } from "./CopilotLogin";
+import { CodexLogin } from "./CodexLogin";
 import { RequestLogs } from "./RequestLogs";
 import { Overview } from "./Overview";
 import { HelpPage } from "./Help";
 import type { LogFilters } from "./LogStudio";
 import {
+  displayModel,
   emptySource,
   isBlocked,
   testKey,
@@ -48,19 +49,21 @@ import "./manual.css";
 import "./catalog.css";
 import "./assets/fonts.css";
 import "./dashboard-client.css";
+import "./redesign.css";
 
 type Message = { text: string; kind?: "success" | "error" | "warning" };
 const errorText = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 
 export default function ManualApp({
-  initialWorkspace = "models",
+  initialWorkspace = "sources",
 }: { initialWorkspace?: Workspace } = {}) {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [tab, setTab] = useState<Workspace>(initialWorkspace);
+  const [agentTab, setAgentTab] = useState<Agent | undefined>(undefined);
   const [view, setView] = useState({ ...initialCatalogView });
   const [busy, setBusy] = useState(false);
   const [testingKey, setTestingKey] = useState<string | null>(null);
@@ -82,9 +85,10 @@ export default function ManualApp({
   const [providerFeedback, setProviderFeedback] = useState<ProviderFeedback>(
     {},
   );
-  const [returnToModel, setReturnToModel] = useState(false);
   const [copilotLogin, setCopilotLogin] = useState(false);
   const [copilotReset, setCopilotReset] = useState(false);
+  const [codexLogin, setCodexLogin] = useState(false);
+  const [codexReset, setCodexReset] = useState(false);
   const [logNavigation, setLogNavigation] = useState<{
     id: number;
     filters: Partial<LogFilters>;
@@ -175,18 +179,15 @@ export default function ManualApp({
   }
   async function discover(source: Source): Promise<Message> {
     setRefreshingId(source.id);
-    feedback(source.id, "正在获取模型目录，已有目录仍可查看…");
+    feedback(source.id, "正在刷新模型目录…");
     try {
       const count = await invoke<number>("manual_discover", {
         providerId: source.id,
       });
-      feedback(
-        source.id,
-        `已获取 ${count} 个模型，保留已有启停选择。未执行推理测试或同步客户端。`,
-      );
-      return { text: `已拉取 ${count} 个模型` };
+      feedback(source.id, `已获取 ${count} 个模型`);
+      return { text: `已获取 ${count} 个模型` };
     } catch (error) {
-      const text = `获取目录失败：${errorText(error)}。已有目录和启停选择保持不变。${source.copilot ? "授权失效时请点击“重新登录”；网络或限流错误可稍后刷新。" : "请检查连接后重试“刷新模型”。"}`;
+      const text = `刷新失败：${errorText(error)}。已有目录和启停选择保持不变`;
       feedback(source.id, text, true);
       return { text, kind: "error" };
     }
@@ -197,13 +198,7 @@ export default function ManualApp({
     ? groups.filter((group) => !isBlocked(group, snapshot.document))
     : [];
   function addProvider() {
-    setTab("providers");
-    setReturnToModel(false);
     setEditor(emptySource());
-  }
-  function viewProvider(source: Source) {
-    setView({ ...initialCatalogView, providerId: source.id });
-    setTab("models");
   }
   function saveProvider(
     source: Source,
@@ -225,6 +220,12 @@ export default function ManualApp({
           keyUpdate,
         );
         setEditor(null);
+        // 刚保存的来源直接选中，右栏立刻反映它的模型与候选状态。
+        setView((current) => ({
+          ...current,
+          providerId: source.id,
+          selectedId: null,
+        }));
         feedback(
           source.id,
           source.models.length
@@ -251,7 +252,6 @@ export default function ManualApp({
         tab={tab}
         onTab={(next) => {
           setTab(next);
-          if (next === "models") setReturnToModel(false);
         }}
         busy={busy}
         onGateway={() => {
@@ -349,20 +349,96 @@ export default function ManualApp({
               <Overview
                 snapshot={snapshot}
                 onLogs={openLogs}
-                onProviders={() => setTab("providers")}
+                onProviders={() => setTab("sources")}
+                onAgents={() => setTab("agents")}
               />
             )}
             {tab === "help" && <HelpPage />}
-            <div hidden={tab !== "models"} className="mg-catalog-host">
-              <ModelCatalog
+            <div hidden={tab !== "sources"} className="mg-catalog-host">
+              <SourceWorkbench
                 snapshot={snapshot}
                 view={view}
                 onViewChange={setView}
+                sources={doc!.providers}
+                feedback={providerFeedback}
+                refreshingId={refreshingId}
+                copilotStatus={snapshot.copilotAuth}
+                codexStatus={snapshot.codexAuth}
                 busy={busy}
                 testingKey={testingKey}
                 onAdd={addProvider}
-                onProviders={() => setTab("providers")}
                 onRefresh={() => void refreshSnapshot()}
+                onToggle={(source, enabled) =>
+                  void action(async () => {
+                    await invoke("manual_set_provider_enabled", {
+                      providerId: source.id,
+                      enabled,
+                      revision: doc!.revision,
+                    });
+                    return {
+                      text: `${source.name} 已${enabled ? "启用" : "停用"}`,
+                    };
+                  })
+                }
+                onEdit={(source) => {
+                  if (source.codex) setCodexLogin(true);
+                  else if (source.copilot) setCopilotLogin(true);
+                  else setEditor(structuredClone(source));
+                }}
+                onDelete={setDeleting}
+                onDiscover={(source) =>
+                  void action(
+                    () => discover(source),
+                    `正在拉取 ${source.name} 的模型…`,
+                  )
+                }
+                onCandidate={(modelId, providerId, enabled) =>
+                  void action(async () => {
+                    await invoke("manual_set_model_enabled", {
+                      providerId,
+                      modelId,
+                      enabled,
+                      revision: doc!.revision,
+                    });
+                    return {
+                      text: `${modelId} 已${enabled ? "启用" : "停用"}`,
+                    };
+                  })
+                }
+                onBatchCandidates={(providerId, enabled, modelIds) =>
+                  void action(async () => {
+                    const changed = await invoke<number>(
+                      "manual_set_models_enabled_batch",
+                      {
+                        providerId,
+                        modelIds: modelIds ?? null,
+                        enabled,
+                        revision: doc!.revision,
+                      },
+                    );
+                    return {
+                      text: `已${enabled ? "启用" : "停用"} ${changed} 个模型`,
+                    };
+                  })
+                }
+                onCostEstimation={(source, enabled) =>
+                  void action(async () => {
+                    await invoke("manual_set_provider_cost_estimation", {
+                      providerId: source.id,
+                      enabled,
+                      revision: doc!.revision,
+                    });
+                    return {
+                      text: `${source.name} 费用估算已${enabled ? "开启" : "关闭"}`,
+                    };
+                  })
+                }
+                onBulkSelect={(source) => setModelEditor(structuredClone(source))}
+                onCopilotLogin={() => setCopilotLogin(true)}
+                onCopilotReset={() => setCopilotReset(true)}
+                onCodexLogin={() => setCodexLogin(true)}
+                onCodexReset={() => setCodexReset(true)}
+                onOpenAgents={() => setTab("agents")}
                 onTest={(group, providerId) => {
                   if (pending.current) return;
                   setTestingKey(testKey(group.id, providerId));
@@ -377,23 +453,23 @@ export default function ManualApp({
                     });
                     return {
                       text: result.success
-                        ? `${group.model.id} · ${name}：测试通过 · ${result.latencyMs} ms`
-                        : `${group.model.id} · ${name}：${result.detail}`,
+                        ? `${displayModel(group)} · ${name}：通过（${result.latencyMs} ms）`
+                        : `${displayModel(group)} · ${name}：${result.detail}`,
                       kind: result.success ? "success" : "error",
                     };
-                  }, `正在测试 ${group.model.id} · ${name}…`);
+                  }, `正在测试 ${displayModel(group)}…`);
                 }}
-                onBlock={(modelId, blocked) =>
+                onBlock={(modelIds, blocked) =>
                   void action(async () => {
                     await invoke("manual_set_model_blocked", {
-                      modelId,
+                      modelIds,
                       blocked,
                       revision: doc!.revision,
                     });
                     if (blocked)
                       setView((current) => ({ ...current, selectedId: null }));
                     return {
-                      text: `${modelId} 已${blocked ? "屏蔽，可在“已屏蔽”中恢复" : "恢复，可在全部模型中查看"}`,
+                      text: `已${blocked ? "停用" : "启用"}模型`,
                     };
                   })
                 }
@@ -409,101 +485,34 @@ export default function ManualApp({
                       protocol,
                       revision: doc!.revision,
                     });
-                    return { text: "Endpoint 已更新" };
+                    return { text: "协议已更新" };
                   })
                 }
                 onEditSource={(source) => {
-                  setTab("providers");
-                  setReturnToModel(true);
-                  if (source.copilot) setCopilotLogin(true);
+                  if (source.codex) setCodexLogin(true);
+                  else if (source.copilot) setCopilotLogin(true);
                   else setEditor(structuredClone(source));
                 }}
-                onUse={() => setTab("agents")}
               />
             </div>
-            {tab === "providers" && (
-              <>
-                {returnToModel && (
-                  <ActionButton
-                    variant="ghost"
-                    size="sm"
-                    className="mg-return-model"
-                    onClick={() => {
-                      setTab("models");
-                      setReturnToModel(false);
-                    }}
-                  >
-                    <ArrowLeft size={14} aria-hidden />
-                    返回刚才的模型
-                  </ActionButton>
-                )}
-                <ProviderList
-                  sources={doc!.providers}
-                  disabled={busy}
-                  feedback={providerFeedback}
-                  refreshingId={refreshingId}
-                  onToggle={(source, enabled) =>
-                    void action(async () => {
-                      await invoke("manual_set_provider_enabled", {
-                        providerId: source.id,
-                        enabled,
-                        revision: doc!.revision,
-                      });
-                      feedback(
-                        source.id,
-                        enabled
-                          ? "来源已启用，恢复参与路由。"
-                          : "来源已停用；模型、配置与登录均保留，可随时恢复。",
-                      );
-                      return {
-                        text: `${source.name} 已${enabled ? "启用" : "停用"}`,
-                      };
-                    })
-                  }
-                  onCostEstimation={(source, enabled) =>
-                    void action(async () => {
-                      await invoke("manual_set_provider_cost_estimation", {
-                        providerId: source.id,
-                        enabled,
-                        revision: doc!.revision,
-                      });
-                      feedback(
-                        source.id,
-                        enabled ? "已参与费用估算" : "已关闭费用估算",
-                      );
-                    })
-                  }
-                  copilotStatus={snapshot.copilotAuth}
-                  onCopilotLogin={() => setCopilotLogin(true)}
-                  onCopilotReset={() => setCopilotReset(true)}
-                  onAdd={addProvider}
-                  onEdit={(source) => setEditor(structuredClone(source))}
-                  onManage={(source) => setModelEditor(structuredClone(source))}
-                  onView={viewProvider}
-                  onDelete={setDeleting}
-                  onDiscover={(source) =>
-                    void action(
-                      () => discover(source),
-                      `正在拉取 ${source.name} 的模型…`,
-                    )
-                  }
-                />
-              </>
-            )}
-            <div hidden={tab !== "agents"}>
+            {tab === "agents" && (
               <AgentWorkspace
+                agent={agentTab}
+                onAgentChange={setAgentTab}
                 disabled={busy}
                 canSync={activeGroups.length > 0}
+                activeGroups={activeGroups}
+                agentsStatus={snapshot.agents}
                 selectedModel={activeGroups.find(
                   (group) => group.id === view.selectedId,
                 )}
                 receipts={receipts}
-                onModels={() => setTab("models")}
+                onModels={() => setTab("sources")}
                 onCopy={(text, label) => void copy(text, label)}
                 onLaunch={(agent, name) =>
                   void action(async () => {
                     await invoke("manual_launch", { agent });
-                    return { text: `已请求启动 ${name}` };
+                    return { text: `已启动 ${name}` };
                   })
                 }
                 onSync={(agent) =>
@@ -514,8 +523,55 @@ export default function ManualApp({
                     setPreview({ ...next, agent });
                   })
                 }
+                onSyncNow={(agent) =>
+                  void action(async () => {
+                    await invoke("manual_sync_now", { agent });
+                    return { text: "可用模型目录已同步" };
+                  }, "正在同步模型目录…")
+                }
+                onToggleAutoSync={(agent, enabled) =>
+                  void action(async () => {
+                    await invoke("manual_set_auto_sync", { agent, enabled });
+                    return {
+                      text: enabled ? "已开启自动更新" : "已关闭自动更新",
+                    };
+                  })
+                }
+                onDisconnectCodex={() =>
+                  void action(async () => {
+                    const msg = await invoke<string>("manual_disconnect_codex");
+                    return { text: msg };
+                  }, "正在断开并还原 Codex 配置…")
+                }
+                onSetCodexDefaultModel={(modelId) =>
+                  void action(async () => {
+                    await invoke("manual_set_codex_default_model", { modelId });
+                    return { text: `已将 ${modelId} 设为 Codex 默认模型` };
+                  })
+                }
+                onMatchCodexModels={(modelIds) =>
+                  void action(async () => {
+                    const matched = await invoke<number>(
+                      "manual_match_codex_models",
+                      { modelIds, revision: doc!.revision },
+                    );
+                    return {
+                      text: `已按本机 Codex 列表匹配启用 ${matched} 个模型`,
+                    };
+                  }, "正在匹配本机 Codex 模型…")
+                }
+                onBlockModel={(modelIds, blocked) =>
+                  void action(async () => {
+                    await invoke("manual_set_model_blocked", {
+                      modelIds,
+                      blocked,
+                      revision: doc!.revision,
+                    });
+                    return { text: blocked ? "已停用模型" : "已启用模型" };
+                  })
+                }
               />
-            </div>
+            )}
             <div hidden={tab !== "logs"}>
               <RequestLogs
                 active={tab === "logs"}
@@ -586,6 +642,73 @@ export default function ManualApp({
           </>
         )}
       </Shell>
+      {codexLogin && (
+        <CodexLogin
+          status={snapshot?.codexAuth}
+          onClose={() => {
+            setCodexLogin(false);
+            void refreshSnapshot();
+          }}
+          onDisconnect={() => setCodexReset(true)}
+          onConnected={async (providerId) => {
+            setTab("sources");
+            setView((current) => ({
+              ...current,
+              providerId,
+              selectedId: null,
+            }));
+            await refreshSnapshot();
+            await action(async () => {
+              try {
+                const count = await invoke<number>("manual_discover", {
+                  providerId,
+                });
+                feedback(providerId, `已连接 Codex 订阅，获取 ${count} 个模型`);
+                return { text: `Codex 订阅已连接，获取 ${count} 个模型` };
+              } catch (error) {
+                const text = `Codex 订阅已连接，但模型拉取失败：${errorText(error)}`;
+                feedback(providerId, text, true);
+                return { text, kind: "error" };
+              }
+            }, "正在拉取 Codex 订阅模型…");
+            setCodexLogin(false);
+          }}
+        />
+      )}
+      {codexReset && (
+        <Modal
+          title="断开 Codex 订阅？"
+          description="将移除 LumaGate 中的 Codex 订阅来源和缓存凭据，不影响你本机 ~/.codex/auth.json 的登录。"
+          busy={busy}
+          onClose={() => setCodexReset(false)}
+          footer={
+            <>
+              <ActionButton
+                variant="outline"
+                disabled={busy}
+                onClick={() => setCodexReset(false)}
+              >
+                取消
+              </ActionButton>
+              <ActionButton
+                disabled={busy}
+                onClick={() =>
+                  void action(async () => {
+                    await invoke("manual_codex_disconnect", {
+                      revision: doc!.revision,
+                    });
+                    setCodexReset(false);
+                    setView((c) => ({ ...c, providerId: "all", selectedId: null }));
+                    return { text: "Codex 订阅已断开" };
+                  })
+                }
+              >
+                确认断开
+              </ActionButton>
+            </>
+          }
+        />
+      )}
       {copilotLogin && (
         <CopilotLogin
           onClose={() => {
@@ -593,7 +716,7 @@ export default function ManualApp({
             void refreshSnapshot();
           }}
           onConnected={async (providerId) => {
-            setTab("providers");
+            setTab("sources");
             await refreshSnapshot();
             await action(async () => {
               try {
@@ -707,8 +830,12 @@ export default function ManualApp({
                 ),
               });
               setModelEditor(null);
-              viewProvider(source);
-              return warning ?? { text: "模型选择已保存，未测试或同步 Agent" };
+              setView((current) => ({
+                ...current,
+                providerId: source.id,
+                selectedId: null,
+              }));
+              return warning ?? { text: "候选范围已保存，未测试或同步 Agent" };
             })
           }
         />
@@ -755,6 +882,7 @@ export default function ManualApp({
                 ...current,
                 [preview.agent]: { files, appliedAt: new Date().toISOString() },
               }));
+              setAgentTab(preview.agent);
               setPreview(null);
               return {
                 text: `已同步 ${files.length} 个文件，请按客户端说明使用网关`,

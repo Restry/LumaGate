@@ -219,6 +219,9 @@ async fn catalog_refresh_commits_initial_and_subsequent_discovery_but_not_failur
     let state = crate::manual::ManualState {
         db: db.clone(),
         copilot: manager,
+        codex: Arc::new(crate::manual::codex_sub::Manager::new(
+            dir.path().join("codex"),
+        )),
         logs: std::sync::Mutex::new(Arc::new(crate::manual::logs::RequestLogs::default())),
         drain: Arc::new(crate::manual::drain::Gate::default()),
         mutation: Mutex::new(()),
@@ -368,6 +371,7 @@ async fn concurrent_refresh_is_single_flight_and_routes_keep_stable_account_iden
         azure_tenant_id: None,
         azure_client_id: None,
         copilot: Some(binding),
+        codex: None,
         protocol: Protocol::OpenaiChat,
         enabled: true,
         cost_estimation_enabled: true,
@@ -423,6 +427,7 @@ async fn bare_model_names_reach_the_real_router_without_login_or_network_calls()
         azure_tenant_id: None,
         azure_client_id: None,
         copilot: Some(binding),
+        codex: None,
         protocol: Protocol::OpenaiChat,
         enabled: true,
         cost_estimation_enabled: true,
@@ -437,7 +442,7 @@ async fn bare_model_names_reach_the_real_router_without_login_or_network_calls()
     let groups = doc.groups();
     let stable = groups[0].id.clone();
     let catalog = crate::manual::catalog::public_models(&doc);
-    assert_eq!(catalog["data"][0]["id"], "gpt-5.4");
+    assert_eq!(catalog["data"][0]["id"], "copilot/gpt-5.4");
     assert_eq!(catalog["data"][0]["route_id"], stable);
     assert!(catalog["data"][0]["aliases"]
         .as_array()
@@ -491,7 +496,7 @@ async fn bare_model_names_reach_the_real_router_without_login_or_network_calls()
 }
 
 #[test]
-fn existing_api_names_are_not_hijacked_even_when_blocked_and_config_resolution_stays_explicit() {
+fn copilot_merges_into_the_ordinary_api_group_without_letting_aliases_remap_policies() {
     let normal = Model {
         id: "gpt-5.4".into(),
         protocol_override: Some(Protocol::OpenaiResponses),
@@ -509,6 +514,7 @@ fn existing_api_names_are_not_hijacked_even_when_blocked_and_config_resolution_s
         azure_tenant_id: None,
         azure_client_id: None,
         copilot: None,
+        codex: None,
         protocol: Protocol::OpenaiChat,
         enabled: true,
         cost_estimation_enabled: true,
@@ -526,6 +532,7 @@ fn existing_api_names_are_not_hijacked_even_when_blocked_and_config_resolution_s
             account_id: "123".into(),
             grant_id: uuid::Uuid::new_v4().to_string(),
         }),
+        codex: None,
         protocol: Protocol::OpenaiChat,
         enabled: true,
         cost_estimation_enabled: true,
@@ -535,22 +542,55 @@ fn existing_api_names_are_not_hijacked_even_when_blocked_and_config_resolution_s
         providers: vec![api, copilot],
         ..Default::default()
     };
+    // 不再跨 Provider 聚合：API 与 Copilot 各自独立，同名时按 Provider 前缀区分。
     let groups = doc.groups();
-    let normal = crate::manual::catalog::resolve_public_group(&groups, "gpt-5.4").unwrap();
-    assert_eq!(normal.provider_ids, vec!["api"]);
-    let cp = groups
+    assert_eq!(groups.len(), 2);
+    let api_group = groups
         .iter()
-        .find(|g| g.model.id.starts_with("copilot/"))
+        .find(|g| g.provider_ids == vec!["api"])
         .unwrap();
-    assert_eq!(cp.public_id, "copilot/gpt-5.4");
+    let cp_group = groups
+        .iter()
+        .find(|g| g.provider_ids == vec![PROVIDER_ID])
+        .unwrap();
+    assert_eq!(api_group.public_id, "api/gpt-5.4");
+    assert_eq!(api_group.display_name, "api/gpt-5.4");
+    assert_eq!(cp_group.public_id, "copilot/gpt-5.4");
+    assert_eq!(cp_group.display_name, "copilot/gpt-5.4");
+    assert_eq!(
+        crate::manual::catalog::resolve_public_group(&groups, "api/gpt-5.4")
+            .unwrap()
+            .id,
+        api_group.id
+    );
+    assert_eq!(
+        crate::manual::catalog::resolve_public_group(&groups, "copilot/gpt-5.4")
+            .unwrap()
+            .id,
+        cp_group.id
+    );
+
+    // 屏蔽各自独立：屏蔽 API 的模型不影响 Copilot。
     doc.blocked_models.insert("gpt-5.4".into());
     let groups = doc.groups();
-    assert!(
-        crate::manual::catalog::resolve_public_group(&groups, "gpt-5.4")
-            .unwrap()
-            .blocked
-    );
+    assert!(groups
+        .iter()
+        .find(|g| g.provider_ids == vec!["api"])
+        .unwrap()
+        .blocked);
+    assert!(!groups
+        .iter()
+        .find(|g| g.provider_ids == vec![PROVIDER_ID])
+        .unwrap()
+        .blocked);
+    doc.blocked_models.insert("copilot/gpt-5.4".into());
+    let groups = doc.groups();
+    assert!(groups.iter().all(|g| g.blocked));
+
+    // 拿掉 API 来源后，公开别名仍然解析得到 Copilot，
+    // 但内部 resolve_group 不接受别名，后备图不会被改名改写。
     doc.providers.remove(0);
+    doc.blocked_models.clear();
     let groups = doc.groups();
     assert!(crate::manual::catalog::resolve_group(&groups, "gpt-5.4").is_none());
     assert!(crate::manual::catalog::resolve_public_group(&groups, "gpt-5.4").is_some());
@@ -575,6 +615,7 @@ fn native_messages_are_preserved_and_ordinary_sources_cannot_claim_the_copilot_n
         azure_tenant_id: None,
         azure_client_id: None,
         copilot: None,
+        codex: None,
         protocol: Protocol::OpenaiChat,
         enabled: true,
         cost_estimation_enabled: true,

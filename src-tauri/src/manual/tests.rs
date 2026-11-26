@@ -65,6 +65,7 @@ fn source(id: &str, base: &str) -> Source {
         azure_tenant_id: None,
         azure_client_id: None,
         copilot: None,
+        codex: None,
         enabled: true,
         cost_estimation_enabled: true,
         protocol: Protocol::OpenaiChat,

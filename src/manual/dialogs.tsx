@@ -7,7 +7,10 @@ import { ActionButton, Choice, Field, Modal } from "./ui";
 import { ProviderModelPicker } from "./ProviderModelPicker";
 import {
   compatible,
+  displayModel,
+  groupModelIds,
   isAzureAd,
+  isCopilotGroup,
   keyUpdateFor,
   protocolPaths,
   type Source,
@@ -298,7 +301,7 @@ export function ProviderModelsEditor({
   return (
     <Modal
       title={`选择模型 · ${source.name}`}
-      description="选择本网关可使用的模型。保存前只修改草稿，不会自动测试或同步 Agent。"
+      description="批量选择本网关的部署候选。候选只控制本网关提供哪些模型，不代表上游已经部署或已验证可用。保存前只修改草稿，不会自动测试或同步 Agent。"
       busy={busy}
       onClose={onClose}
       footer={
@@ -310,7 +313,7 @@ export function ProviderModelsEditor({
             disabled={busy}
             onClick={() => onSave({ ...source, models })}
           >
-            保存模型选择
+            保存候选范围
           </ActionButton>
         </>
       }
@@ -346,14 +349,12 @@ export function RoutingEditor({
   }));
   const choices = groups.filter(
     (g) =>
-      !g.model.id.startsWith("copilot/") &&
-      !group.model.id.startsWith("copilot/") &&
-      compatible(group, g),
+      !isCopilotGroup(g) && !isCopilotGroup(group) && compatible(group, g),
   );
   return (
     <Modal
       title="路由设置"
-      description={`${group.model.id} · ${protocolPaths[group.protocol]}`}
+      description={`${displayModel(group)} · ${protocolPaths[group.protocol]}`}
       busy={busy}
       onClose={onClose}
       footer={
@@ -453,7 +454,7 @@ export function MetadataViewer({
   return (
     <Modal
       title="模型元数据"
-      description={`${group.model.id}：各 Provider 的 /v1/models 原始条目。仅查看，不发模型请求。`}
+      description={`${displayModel(group)}：各 Provider 的 /v1/models 原始条目。仅查看，不发模型请求。`}
       wide
       onClose={onClose}
       footer={
@@ -464,7 +465,9 @@ export function MetadataViewer({
     >
       {group.providerIds.map((id) => {
         const source = sources.find((p) => p.id === id);
-        const model = source?.models.find((m) => m.id === group.model.id);
+        const model = source?.models.find((m) =>
+          groupModelIds(group).includes(m.id),
+        );
         return (
           <section className="mg-code-section" key={id}>
             <h3>{source?.name}</h3>
