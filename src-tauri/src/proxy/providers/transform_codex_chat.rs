@@ -283,13 +283,15 @@ pub fn responses_to_chat_completions_with_reasoning(
         }
     }
 
+    let model = body.get("model").and_then(|v| v.as_str()).unwrap_or("");
+    let is_gemini_model = model.to_ascii_lowercase().contains("gemini");
+
     if let Some(input) = body.get("input") {
-        append_responses_input_as_chat_messages(input, &mut messages, &tool_context)?;
+        append_responses_input_as_chat_messages(input, &mut messages, &tool_context, is_gemini_model)?;
     }
     let messages = collapse_system_messages_to_head(messages);
     result["messages"] = json!(messages);
 
-    let model = body.get("model").and_then(|v| v.as_str()).unwrap_or("");
     if let Some(max_tokens) = body.get("max_output_tokens") {
         if super::transform::is_openai_o_series(model) {
             result["max_completion_tokens"] = max_tokens.clone();
@@ -596,15 +598,53 @@ fn instruction_text(value: &Value) -> String {
     }
 }
 
+fn record_chat_tool_call_name(call: &Value, call_names_by_id: &mut HashMap<String, String>) {
+    let call_id = call
+        .get("id")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let name = call
+        .pointer("/function/name")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    if let (Some(call_id), Some(name)) = (call_id, name) {
+        call_names_by_id.insert(call_id.to_string(), name.to_string());
+    }
+}
+
+fn push_orphan_tool_output_as_user_message(
+    messages: &mut Vec<Value>,
+    pending_media: &mut Vec<Value>,
+    tool_name: Option<&str>,
+    output: String,
+) {
+    flush_pending_chat_tool_media(messages, pending_media);
+    let text = match tool_name {
+        Some(name) if !output.is_empty() => format!("[{name}]\n{output}"),
+        Some(name) => format!("[{name}]"),
+        None => output,
+    };
+    if !text.is_empty() {
+        messages.push(json!({
+            "role": "user",
+            "content": text
+        }));
+    }
+}
+
 fn append_responses_input_as_chat_messages(
     input: &Value,
     messages: &mut Vec<Value>,
     tool_context: &CodexToolContext,
+    is_gemini_model: bool,
 ) -> Result<(), ProxyError> {
     let mut pending_tool_calls = Vec::new();
     let mut pending_media = Vec::new();
     let mut pending_reasoning: Option<String> = None;
     let mut last_assistant_index: Option<usize> = None;
+    let mut call_names_by_id: HashMap<String, String> = HashMap::new();
 
     match input {
         Value::String(text) => {
@@ -622,7 +662,9 @@ fn append_responses_input_as_chat_messages(
                     &mut pending_media,
                     &mut pending_reasoning,
                     &mut last_assistant_index,
+                    &mut call_names_by_id,
                     tool_context,
+                    is_gemini_model,
                 )?;
             }
         }
@@ -634,7 +676,9 @@ fn append_responses_input_as_chat_messages(
                 &mut pending_media,
                 &mut pending_reasoning,
                 &mut last_assistant_index,
+                &mut call_names_by_id,
                 tool_context,
+                is_gemini_model,
             )?;
         }
         _ => {}
@@ -671,24 +715,29 @@ fn append_responses_item_as_chat_message(
     pending_media: &mut Vec<Value>,
     pending_reasoning: &mut Option<String>,
     last_assistant_index: &mut Option<usize>,
+    call_names_by_id: &mut HashMap<String, String>,
     tool_context: &CodexToolContext,
+    is_gemini_model: bool,
 ) -> Result<(), ProxyError> {
     let item_type = item.get("type").and_then(|v| v.as_str());
     match item_type {
         Some("function_call") => {
             append_unique_pending_reasoning(pending_reasoning, responses_item_reasoning_text(item));
-            pending_tool_calls.push(responses_function_call_to_chat_tool_call(
-                item,
-                tool_context,
-            ));
+            let call = responses_function_call_to_chat_tool_call(item, tool_context);
+            record_chat_tool_call_name(&call, call_names_by_id);
+            pending_tool_calls.push(call);
         }
         Some("custom_tool_call") => {
             append_unique_pending_reasoning(pending_reasoning, responses_item_reasoning_text(item));
-            pending_tool_calls.push(responses_custom_tool_call_to_chat_tool_call(item));
+            let call = responses_custom_tool_call_to_chat_tool_call(item);
+            record_chat_tool_call_name(&call, call_names_by_id);
+            pending_tool_calls.push(call);
         }
         Some("tool_search_call") => {
             append_unique_pending_reasoning(pending_reasoning, responses_item_reasoning_text(item));
-            pending_tool_calls.push(responses_tool_search_call_to_chat_tool_call(item));
+            let call = responses_tool_search_call_to_chat_tool_call(item);
+            record_chat_tool_call_name(&call, call_names_by_id);
+            pending_tool_calls.push(call);
         }
         Some("function_call_output") => {
             flush_pending_tool_calls(
@@ -698,7 +747,16 @@ fn append_responses_item_as_chat_message(
                 pending_reasoning,
                 last_assistant_index,
             );
-            let call_id = item.get("call_id").and_then(|v| v.as_str()).unwrap_or("");
+            let call_id = item.get("call_id").and_then(|v| v.as_str()).unwrap_or("").trim();
+            let resolved_name = call_names_by_id
+                .get(call_id)
+                .map(String::as_str)
+                .or_else(|| {
+                    item.get("name")
+                        .and_then(|v| v.as_str())
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                });
             let media_plan = item
                 .get("output")
                 .cloned()
@@ -715,11 +773,32 @@ fn append_responses_item_as_chat_message(
                     None => String::new(),
                 }
             };
-            messages.push(json!({
-                "role": "tool",
-                "tool_call_id": call_id,
-                "content": output
-            }));
+            // Codex Desktop 会在多轮对话中注入无 call_id 的合成 function_call_output
+            // （如 codex_apps_open_page 伴生页面快照）；Gemini 同时拒绝无匹配 function_call
+            // 的孤立 tool 消息。将这类孤立上下文转为 user 文本消息，保留上下文且满足所有
+            // Chat Completions / Gemini 上游的严格工具轮次校验。
+            if call_id.is_empty()
+                || (is_gemini_model && !call_names_by_id.contains_key(call_id))
+            {
+                push_orphan_tool_output_as_user_message(
+                    messages,
+                    pending_media,
+                    resolved_name,
+                    output,
+                );
+            } else {
+                let mut tool_msg = json!({
+                    "role": "tool",
+                    "tool_call_id": call_id,
+                    "content": output
+                });
+                if is_gemini_model {
+                    if let Some(name) = resolved_name {
+                        tool_msg["name"] = json!(name);
+                    }
+                }
+                messages.push(tool_msg);
+            }
         }
         Some("custom_tool_call_output") | Some("tool_search_output") => {
             flush_pending_tool_calls(
@@ -729,7 +808,16 @@ fn append_responses_item_as_chat_message(
                 pending_reasoning,
                 last_assistant_index,
             );
-            let call_id = item.get("call_id").and_then(|v| v.as_str()).unwrap_or("");
+            let call_id = item.get("call_id").and_then(|v| v.as_str()).unwrap_or("").trim();
+            let resolved_name = call_names_by_id
+                .get(call_id)
+                .map(String::as_str)
+                .or_else(|| {
+                    item.get("name")
+                        .and_then(|v| v.as_str())
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                });
             let mut transformed_item = item.clone();
             let replacement_block = json!({
                 "type": "text",
@@ -755,11 +843,28 @@ fn append_responses_item_as_chat_message(
                 // Preserve the legacy whole-item representation exactly.
                 canonical_json_string(item)
             };
-            messages.push(json!({
-                "role": "tool",
-                "tool_call_id": call_id,
-                "content": output
-            }));
+            if call_id.is_empty()
+                || (is_gemini_model && !call_names_by_id.contains_key(call_id))
+            {
+                push_orphan_tool_output_as_user_message(
+                    messages,
+                    pending_media,
+                    resolved_name,
+                    output,
+                );
+            } else {
+                let mut tool_msg = json!({
+                    "role": "tool",
+                    "tool_call_id": call_id,
+                    "content": output
+                });
+                if is_gemini_model {
+                    if let Some(name) = resolved_name {
+                        tool_msg["name"] = json!(name);
+                    }
+                }
+                messages.push(tool_msg);
+            }
         }
         Some("reasoning") => {
             // reasoning 一律先进入 pending_reasoning，前向附挂到其后的
@@ -5264,5 +5369,77 @@ mod tests {
             "tools should be present from tool_search_output"
         );
         assert_eq!(result["tools"][0]["function"]["name"], "search_docs");
+    }
+
+    #[test]
+    fn orphan_function_call_output_without_call_id_becomes_user_context_and_gemini_attaches_tool_name() {
+        let input = json!({
+            "model": "gemini-4-neon",
+            "input": [
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "hello"}]
+                },
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "hi"}]
+                },
+                {
+                    "type": "function_call_output",
+                    "id": "fco_1",
+                    "name": "codex_apps_open_page",
+                    "namespace": "agent",
+                    "output": "{\"page_id\":null}"
+                },
+                {
+                    "type": "function_call",
+                    "call_id": "call_shell_1",
+                    "name": "shell_command",
+                    "arguments": "{\"command\":\"ls\"}"
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_shell_1",
+                    "output": "README.md"
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_orphan_stale",
+                    "name": "old_tool",
+                    "output": "stale output"
+                },
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "are u alright ?"}]
+                }
+            ]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+        let roles: Vec<&str> = messages
+            .iter()
+            .filter_map(|m| m.get("role").and_then(Value::as_str))
+            .collect();
+        assert_eq!(
+            roles,
+            vec!["user", "assistant", "user", "assistant", "tool", "user", "user"]
+        );
+        // Orphan Codex Desktop companion-page output without call_id -> user context
+        assert_eq!(
+            messages[2]["content"],
+            "[codex_apps_open_page]\n{\"page_id\":null}"
+        );
+        // Matched Gemini tool output carries explicit `name` for Copilot's Gemini translator
+        assert_eq!(messages[4]["role"], "tool");
+        assert_eq!(messages[4]["tool_call_id"], "call_shell_1");
+        assert_eq!(messages[4]["name"], "shell_command");
+        assert_eq!(messages[4]["content"], "README.md");
+        // Unmatched Gemini tool output with stale call_id -> user context instead of invalid tool turn
+        assert_eq!(messages[5]["role"], "user");
+        assert_eq!(messages[5]["content"], "[old_tool]\nstale output");
     }
 }
