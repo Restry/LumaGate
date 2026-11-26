@@ -204,9 +204,6 @@ describe("Codex 订阅接入与客户端同步", () => {
       }),
     );
 
-    await user.click(
-      screen.getByRole("button", { name: /Codex 可用模型/ }),
-    );
     const setDefault = screen.getByRole("button", { name: "设为默认" });
     await user.click(setDefault);
     await waitFor(() =>

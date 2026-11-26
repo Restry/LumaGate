@@ -885,7 +885,7 @@ export default function ManualApp({
               setAgentTab(preview.agent);
               setPreview(null);
               return {
-                text: `已同步 ${files.length} 个文件，请按客户端说明使用网关`,
+                text: `已同步 ${files.length} 个文件`,
               };
             })
           }

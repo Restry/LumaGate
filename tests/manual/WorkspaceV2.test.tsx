@@ -452,14 +452,19 @@ describe("接入与使用的下一步", () => {
     expect(data.document.providers).toHaveLength(3);
   });
 
-  it("同步结果在切换工作区后保留，Codex 显示真实命令但不自动启动", async () => {
+  it("展开 Codex 展示配置文件路径和模型列表，同步只写入确认配置且不触发启动", async () => {
     const user = userEvent.setup();
     render(<ManualApp />);
     await user.click(screen.getByRole("button", { name: "客户端" }));
     await user.click(await screen.findByRole("button", { name: "展开 Codex" }));
     const copy = vi.spyOn(navigator.clipboard, "writeText");
-    await user.click(screen.getByRole("button", { name: "复制网关启动命令" }));
-    expect(copy).toHaveBeenCalledWith("codex --profile cc_switch_manual");
+    await user.click(
+      screen.getByRole("button", { name: "复制 Codex 配置文件路径" }),
+    );
+    expect(copy).toHaveBeenCalledWith("~/.codex/config.toml");
+    expect(
+      screen.queryByRole("button", { name: "启动 Codex" }),
+    ).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "一键接入 Codex" }));
     const dialog = await screen.findByRole("dialog");
     expect(
@@ -468,22 +473,12 @@ describe("接入与使用的下一步", () => {
     await user.click(
       within(dialog).getByRole("button", { name: "确认写入配置" }),
     );
-    expect(
-      await screen.findByRole("region", { name: "Codex 同步结果" }),
-    ).toHaveTextContent("本次会话已同步");
-    await user.click(screen.getByRole("button", { name: "来源与模型" }));
-    await user.click(screen.getByRole("button", { name: "客户端" }));
-    expect(
-      screen.getByRole("region", { name: "Codex 同步结果" }),
-    ).toHaveTextContent("不代表客户端已连接");
-    await user.click(screen.getByText("查看写入文件与备份"));
-    expect(
-      screen.getByText("备份：/isolated/config.toml.backup"),
-    ).toBeVisible();
+    await waitFor(() =>
+      expect(rpc).toHaveBeenCalledWith("manual_apply_sync", {
+        planId: "fixture-plan",
+      }),
+    );
     expect(commands()).not.toContain("manual_launch");
     expect(rpc).toHaveBeenCalledWith("manual_preview_sync", { agent: "codex" });
-    expect(rpc).toHaveBeenCalledWith("manual_apply_sync", {
-      planId: "fixture-plan",
-    });
   });
 });

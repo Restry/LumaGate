@@ -203,7 +203,7 @@ describe("手动网关操作边界", () => {
   });
 
   it.each(["Pi Agent", "Claude Code", "Codex"])(
-    "启动 %s 不同步或测试模型",
+    "展开 %s 展示配置文件路径与模型清单且不触发启动或同步",
     async (name) => {
       const user = userEvent.setup();
       render(<ManualApp />);
@@ -212,8 +212,16 @@ describe("手动网关操作边界", () => {
       await user.click(
         await screen.findByRole("button", { name: `展开 ${name}` }),
       );
-      await user.click(screen.getByRole("button", { name: `启动 ${name}` }));
-      await waitFor(() => expect(calls()).toContain("manual_launch"));
+      expect(
+        screen.getByRole("button", { name: `复制 ${name} 配置文件路径` }),
+      ).toBeVisible();
+      expect(
+        screen.getByRole("list", { name: `${name} 模型清单` }),
+      ).toBeVisible();
+      expect(
+        screen.queryByRole("button", { name: `启动 ${name}` }),
+      ).not.toBeInTheDocument();
+      expect(calls()).not.toContain("manual_launch");
       expect(calls()).not.toContain("manual_preview_sync");
       expect(calls()).not.toContain("manual_apply_sync");
       expect(calls()).not.toContain("manual_test");

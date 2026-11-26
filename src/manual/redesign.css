@@ -1846,32 +1846,101 @@
   overflow-y: auto;
 }
 
-/* Agent Expanded Detail */
-.mg-agent-detail-bar {
+/* Agent Expanded Detail — compact single meta row + direct model list */
+.mg-agent-meta-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   flex-wrap: wrap;
 }
-.mg-agent-detail-kv {
+.mg-agent-meta-items {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 16px;
   flex-wrap: wrap;
+  min-width: 0;
+}
+.mg-agent-kv {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-size: 12px;
   color: var(--mg-muted);
+  min-width: 0;
 }
-.mg-agent-detail-kv code {
+.mg-agent-kv-label {
+  color: var(--mg-muted);
+  flex-shrink: 0;
+}
+.mg-agent-kv code {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 11.5px;
   color: var(--mg-ink);
 }
-.mg-agent-detail-controls {
+.mg-path-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 6px;
+  margin: -2px -6px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--mg-muted);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.mg-path-copy:hover {
+  background: var(--mg-soft);
+  color: var(--mg-ink);
+}
+.mg-agent-meta-actions {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-shrink: 0;
+}
+
+.mg-agent-models {
+  border-top: 1px solid var(--mg-line);
+  padding-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.mg-agent-models-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   flex-wrap: wrap;
+}
+.mg-agent-models-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--mg-ink);
+}
+.mg-agent-models-title em {
+  font-style: normal;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--mg-muted);
+  padding: 1px 6px;
+  border-radius: 99px;
+  background: var(--mg-soft);
+  font-variant-numeric: tabular-nums;
+}
+.mg-agent-models .mg-sub-search {
+  width: 220px;
+  height: 30px;
+}
+.mg-agent-models .mg-client-model-list {
+  max-height: 360px;
+  overflow-y: auto;
 }
 
 /* Tier 3 Nested Disclosure */
